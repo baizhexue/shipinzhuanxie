@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import importlib.util
+import os
+import shlex
+import shutil
+import sys
+from typing import Optional
+
+
+@dataclass(frozen=True)
+class Settings:
+    output_dir: Path
+    cookies_file: Optional[Path]
+    cookies_from_browser: Optional[str]
+    ffmpeg_cmd: tuple[str, ...]
+    ytdlp_cmd: tuple[str, ...]
+    whisper_model: str
+    whisper_device: str
+
+
+def load_settings(
+    *,
+    output_dir: Optional[str] = None,
+    cookies_file: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
+    whisper_model: Optional[str] = None,
+    whisper_device: Optional[str] = None,
+) -> Settings:
+    env_output_dir = os.getenv("APP_OUTPUT_DIR", "output")
+    env_ffmpeg_bin = os.getenv("FFMPEG_BIN") or _discover_ffmpeg_command()
+    env_ytdlp_bin = os.getenv("YTDLP_BIN") or _discover_ytdlp_command()
+    env_whisper_model = os.getenv("WHISPER_MODEL", "small")
+    env_whisper_device = os.getenv("WHISPER_DEVICE", "auto")
+    env_cookies_file = os.getenv("DOUYIN_COOKIES_FILE")
+    env_cookies_browser = os.getenv("DOUYIN_COOKIES_BROWSER")
+
+    resolved_cookies = cookies_file or env_cookies_file
+    resolved_browser = cookies_from_browser or env_cookies_browser
+
+    return Settings(
+        output_dir=Path(output_dir or env_output_dir).resolve(),
+        cookies_file=Path(resolved_cookies).resolve() if resolved_cookies else None,
+        cookies_from_browser=resolved_browser or None,
+        ffmpeg_cmd=_parse_command(env_ffmpeg_bin),
+        ytdlp_cmd=_parse_command(env_ytdlp_bin),
+        whisper_model=whisper_model or env_whisper_model,
+        whisper_device=whisper_device or env_whisper_device,
+    )
+
+
+def _discover_ytdlp_command() -> str:
+    discovered = shutil.which("yt-dlp")
+    if discovered:
+        return discovered
+
+    venv_script = _venv_script("yt-dlp")
+    if venv_script:
+        return str(venv_script)
+
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return f'"{sys.executable}" -m yt_dlp'
+
+    return "yt-dlp"
+
+
+def _discover_ffmpeg_command() -> str:
+    discovered = shutil.which("ffmpeg")
+    if discovered:
+        return discovered
+
+    imageio_ffmpeg = _discover_imageio_ffmpeg()
+    if imageio_ffmpeg:
+        return imageio_ffmpeg
+
+    for candidate in _ffmpeg_candidates():
+        if candidate.exists():
+            return str(candidate)
+
+    return "ffmpeg"
+
+
+def _ffmpeg_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    local_appdata = Path(os.getenv("LOCALAPPDATA", ""))
+    program_files = Path(os.getenv("ProgramFiles", ""))
+
+    if local_appdata:
+        candidates.extend(
+            sorted(
+                (local_appdata / "Microsoft/WinGet/Packages").glob(
+                    "Gyan.FFmpeg*/ffmpeg-*/bin/ffmpeg.exe"
+                ),
+                reverse=True,
+            )
+        )
+
+    if program_files:
+        candidates.extend(
+            [
+                program_files / "ffmpeg/bin/ffmpeg.exe",
+                program_files / "FFmpeg/bin/ffmpeg.exe",
+            ]
+        )
+
+    scoop_root = Path.home() / "scoop/apps/ffmpeg/current/bin/ffmpeg.exe"
+    candidates.append(scoop_root)
+    return candidates
+
+
+def _discover_imageio_ffmpeg() -> Optional[str]:
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        return None
+
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _venv_script(name: str) -> Optional[Path]:
+    script_dir = Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin")
+    suffix = ".exe" if os.name == "nt" else ""
+    candidate = script_dir / f"{name}{suffix}"
+    return candidate if candidate.exists() else None
+
+
+def _parse_command(value: str) -> tuple[str, ...]:
+    parts = tuple(shlex.split(value, posix=False))
+    if not parts:
+        raise ValueError("Command configuration cannot be empty.")
+    return parts

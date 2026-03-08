@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "douyin-pipeline"
+version = "0.1.0"
+description = "Lightweight Douyin video download and transcription pipeline."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "yt-dlp>=2025.1.0",
+]
+
+[project.optional-dependencies]
+asr = [
+  "faster-whisper>=1.1.0",
+  "opencc-python-reimplemented>=0.1.7",
+]
+web = [
+  "fastapi>=0.116.0",
+  "playwright>=1.58.0",
+  "uvicorn>=0.35.0",
+]
+
+[project.scripts]
+douyin-pipeline = "douyin_pipeline.cli:main"
+douyin-web = "douyin_pipeline.web:main"
+douyin-telegram = "douyin_pipeline.telegram_bot:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+douyin_pipeline = [
+  "web_assets/index.html",
+  "web_assets/static/app.css",
+  "web_assets/static/app.js",
+]

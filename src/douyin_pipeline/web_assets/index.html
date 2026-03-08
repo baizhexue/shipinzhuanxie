@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Douyin Pipeline Studio</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div class="grain"></div>
+
+    <main class="shell">
+      <header class="hero panel">
+        <p class="eyebrow">LOCAL CAPTURE STUDIO</p>
+        <div class="hero-copy">
+          <div>
+            <h1>贴进去，拿下来，再读成文字。</h1>
+            <p class="lede">
+              这是一个本地运行的轻量工具。输入抖音分享文案或链接，网页会帮你下载视频，
+              也可以继续提取音频并转成文字。
+            </p>
+          </div>
+          <div class="hero-note">
+            <span class="note-kicker">What this page adds</span>
+            <ul>
+              <li>单页下载和转写</li>
+              <li>环境状态自检</li>
+              <li>最近任务列表</li>
+              <li>结果文件直达</li>
+            </ul>
+          </div>
+        </div>
+      </header>
+
+      <section class="grid">
+        <section class="panel composer">
+          <div class="section-head">
+            <span>New Job</span>
+            <button id="selfCheckBtn" class="ghost-button" type="button">检查环境</button>
+          </div>
+
+          <form id="jobForm">
+            <label class="field">
+              <span>分享文案 / 链接</span>
+              <textarea
+                id="rawInput"
+                name="rawInput"
+                rows="7"
+                placeholder="把完整分享文案或链接粘贴到这里"
+                required
+              ></textarea>
+            </label>
+
+            <div class="switches">
+              <label class="switch-card">
+                <input type="radio" name="action" value="download" checked />
+                <span>只下载</span>
+                <small>更快，先验证下载链路</small>
+              </label>
+              <label class="switch-card">
+                <input type="radio" name="action" value="run" />
+                <span>下载 + 转文字</span>
+                <small>完整链路，依赖 ffmpeg 和 faster-whisper</small>
+              </label>
+            </div>
+
+            <details class="advanced">
+              <summary>高级设置</summary>
+              <div class="advanced-grid">
+                <label class="field">
+                  <span>cookies.txt 路径</span>
+                  <input id="cookiesInput" type="text" placeholder="可选，例如 D:\cookies.txt" />
+                </label>
+                <label class="field">
+                  <span>浏览器 cookies</span>
+                  <select id="browserCookiesInput">
+                    <option value="">不使用</option>
+                    <option value="edge">Edge</option>
+                    <option value="chrome">Chrome</option>
+                    <option value="firefox">Firefox</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Whisper 模型</span>
+                  <input id="modelInput" type="text" value="small" />
+                </label>
+                <label class="field">
+                  <span>设备</span>
+                  <input id="deviceInput" type="text" value="auto" />
+                </label>
+              </div>
+            </details>
+
+            <div class="actions">
+              <button id="submitBtn" class="primary-button" type="submit">开始处理</button>
+              <p class="microcopy">建议第一次先选“只下载”，确认 `yt-dlp` 和链接链路能跑通。</p>
+            </div>
+          </form>
+
+          <div id="flash" class="flash hidden"></div>
+        </section>
+
+        <aside class="panel sidebar">
+          <div class="section-head">
+            <span>Runtime</span>
+            <button id="refreshJobsBtn" class="ghost-button" type="button">刷新列表</button>
+          </div>
+          <div id="doctorList" class="doctor-list"></div>
+
+          <div class="section-head jobs-head">
+            <span>Recent Jobs</span>
+          </div>
+          <div id="jobsList" class="jobs-list"></div>
+        </aside>
+      </section>
+
+      <section id="resultPanel" class="panel result-panel empty">
+        <div class="result-empty">
+          <p class="eyebrow">RESULT PREVIEW</p>
+          <h2>结果会显示在这里。</h2>
+          <p>
+            页面会展示任务状态、输出文件、文字预览。刷新页面后，最近任务也会保留下来。
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>
