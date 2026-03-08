@@ -18,10 +18,13 @@ $fileItems = @(
     "pyproject.toml",
     "README.md",
     ".gitignore",
+    ".dockerignore",
     ".env.example",
     "LICENSE",
     "CHANGELOG.md",
-    "CONTRIBUTING.md"
+    "CONTRIBUTING.md",
+    "Dockerfile",
+    "docker-compose.yml"
 )
 
 foreach ($item in $fileItems) {

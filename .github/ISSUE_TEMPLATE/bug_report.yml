@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a reproducible problem in download, transcription, Web UI, or Telegram bot.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the problem directly.
+      placeholder: What failed, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI
+        - Web UI
+        - Telegram bot
+        - Download pipeline
+        - Transcription pipeline
+        - Docker / deployment
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the exact input, command, or action sequence.
+      placeholder: |
+        1. Start the service
+        2. Paste this Douyin share text
+        3. Click Download + Transcribe
+        4. Observe the failure
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Error details
+      description: Paste the visible error, manifest snippet, or log excerpt.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, browser source, deployment mode, and whether cookies were used.
+      placeholder: Windows 11 / Python 3.12 / Edge cookies / local web mode
+    validations:
+      required: true

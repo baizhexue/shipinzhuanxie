@@ -1,0 +1,26 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shipinzhuanxie:0.3.0
+    container_name: shipinzhuanxie-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "4444:4444"
+    volumes:
+      - ./output:/app/output
+    command: ["douyin-web", "--host", "0.0.0.0", "--port", "4444", "--out", "/app/output"]
+
+  telegram:
+    image: shipinzhuanxie:0.3.0
+    container_name: shipinzhuanxie-telegram
+    restart: unless-stopped
+    profiles: ["telegram"]
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+    command: ["douyin-telegram", "--out", "/app/output"]

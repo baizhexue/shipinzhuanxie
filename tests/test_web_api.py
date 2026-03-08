@@ -43,6 +43,17 @@ class WebApiTests(unittest.TestCase):
     def setUp(self) -> None:
         DummyThread.instances = []
 
+    def test_create_job_without_input_returns_structured_error(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            settings = _make_settings(Path(tmp_dir))
+            client = TestClient(create_app(settings))
+            response = client.post("/api/jobs", json={"raw_input": "", "action": "download"})
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error_code"], "invalid_input")
+        self.assertTrue(payload["error_hint"])
+
     def test_create_job_returns_queued_manifest(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             settings = _make_settings(Path(tmp_dir))

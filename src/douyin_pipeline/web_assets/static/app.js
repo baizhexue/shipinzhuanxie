@@ -155,7 +155,20 @@ function buildProgress(job, compact = false) {
   `;
 }
 
-function buildErrorHint(errorText) {
+function formatApiError(data, fallback) {
+  const detail = typeof data?.detail === "string" && data.detail ? data.detail : fallback;
+  const hint = typeof data?.error_hint === "string" && data.error_hint ? data.error_hint : "";
+  return [detail, hint].filter(Boolean).join(" ");
+}
+
+function buildErrorHint(job) {
+  if (!job) return "";
+
+  if (job.error_hint) {
+    return `<p class="result-copy">提示：${escapeHtml(job.error_hint)}</p>`;
+  }
+
+  const errorText = String(job.technical_error || job.error || "");
   if (!errorText) return "";
 
   if (errorText.includes("Fresh cookies")) {
@@ -302,10 +315,24 @@ function renderResult(job) {
     : `<div class="error-text">当前任务还没有可展示的文字内容。</div>`;
 
   const errorHtml = job.error
-    ? `<p class="error-text">错误信息：${escapeHtml(job.error)}</p>`
+    ? `
+      <div class="result-error">
+        <p class="error-text">错误信息：${escapeHtml(job.error)}</p>
+        ${
+          job.technical_error
+            ? `
+              <details class="technical-error">
+                <summary>技术细节</summary>
+                <pre>${escapeHtml(job.technical_error)}</pre>
+              </details>
+            `
+            : ""
+        }
+      </div>
+    `
     : `<p class="result-copy">任务完成后，下面可以直接打开生成的文件。</p>`;
 
-  const hintHtml = buildErrorHint(job.error);
+  const hintHtml = buildErrorHint(job);
   const actionsHtml = buildResultActions(job);
   const progressHtml = buildProgress(job);
 
@@ -367,7 +394,7 @@ async function fetchJob(jobId) {
   const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.detail || "任务详情加载失败");
+    throw new Error(formatApiError(data, "任务详情加载失败"));
   }
   return data;
 }
@@ -444,7 +471,7 @@ async function submitJob(event) {
 
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.detail || "任务创建失败");
+      throw new Error(formatApiError(data, "任务创建失败"));
     }
 
     renderResult(data);
@@ -484,7 +511,7 @@ async function transcribeJob(job = currentJob) {
     );
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.detail || "转写任务创建失败");
+      throw new Error(formatApiError(data, "转写任务创建失败"));
     }
 
     renderResult(data);

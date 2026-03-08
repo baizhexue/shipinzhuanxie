@@ -12,6 +12,7 @@ import urllib.error
 import urllib.request
 
 from douyin_pipeline.config import Settings
+from douyin_pipeline.errors import classify_exception
 from douyin_pipeline.jobs import read_manifest, to_public_job
 from douyin_pipeline.parser import extract_share_url
 from douyin_pipeline.pipeline import prepare_job, run_prepared_job
@@ -214,7 +215,8 @@ class TelegramBotRunner:
         try:
             prepared_job = prepare_job(raw_input, self._app_settings, action="run")
         except Exception as exc:
-            self._client.send_message(chat_id, f"Failed to parse message: {exc}")
+            error_info = classify_exception(exc)
+            self._client.send_message(chat_id, _build_failure_text(error_info.message, error_info.hint))
             return
 
         self._client.send_message(
@@ -241,7 +243,10 @@ class TelegramBotRunner:
         ]
 
         if manifest.get("error"):
-            message_lines.append(f"error: {manifest['error']}")
+            message_lines.append(f"reason: {manifest['error']}")
+
+        if manifest.get("error_hint"):
+            message_lines.append(f"hint: {manifest['error_hint']}")
 
         self._client.send_message(chat_id, "\n".join(message_lines))
 
@@ -492,3 +497,9 @@ def _help_text() -> str:
         "/help - show this message\n"
         "/web - show the web UI URL if configured"
     )
+
+
+def _build_failure_text(message: str, hint: Optional[str]) -> str:
+    if not hint:
+        return message
+    return f"{message}\nHint: {hint}"

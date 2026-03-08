@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+import unittest
+
+from douyin_pipeline.errors import classify_exception
+
+
+class ErrorClassificationTests(unittest.TestCase):
+    def test_classifies_douyin_cookie_error(self) -> None:
+        error = RuntimeError("Video download failed.\nstderr: Fresh cookies (not necessarily logged in) are needed")
+        actual = classify_exception(error)
+        self.assertEqual(actual.code, "douyin_fresh_cookies")
+        self.assertEqual(actual.kind, "auth")
+        self.assertIn("cookies", actual.message)
+        self.assertIsNotNone(actual.hint)
+
+    def test_classifies_invalid_input(self) -> None:
+        actual = classify_exception(ValueError("No URL found. Please paste the full share text or a URL."))
+        self.assertEqual(actual.code, "invalid_input")
+        self.assertEqual(actual.kind, "input")
+
+    def test_falls_back_to_unknown_error(self) -> None:
+        actual = classify_exception(RuntimeError("something unexpected"))
+        self.assertEqual(actual.code, "unknown_error")
+        self.assertEqual(actual.kind, "unknown")
+
+
+if __name__ == "__main__":
+    unittest.main()

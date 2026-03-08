@@ -1,0 +1,17 @@
+.git
+.venv
+output
+release
+build
+dist
+logs
+__pycache__
+*.pyc
+*.log
+.env
+.env.*
+!.env.example
+playwright_cookies*.json
+playwright_cookies*.txt
+douyin_detail.json
+tmp_chrome_profile*

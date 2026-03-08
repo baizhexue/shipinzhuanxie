@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 
 from douyin_pipeline.config import Settings
 from douyin_pipeline.downloader import DownloadResult, create_job_dir, download_video
+from douyin_pipeline.errors import UserFacingError, classify_exception
 from douyin_pipeline.jobs import read_manifest, relative_to, write_manifest
 from douyin_pipeline.parser import extract_share_url
 from douyin_pipeline.transcriber import TranscriptResult, transcribe_video
@@ -53,6 +54,7 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
         status="transcribing",
         detail="Preparing transcript for existing video.",
         error=None,
+        error_info=None,
         phase="extracting_audio",
         progress_percent=34.0,
         eta_seconds=None,
@@ -71,6 +73,7 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
                 status="transcribing",
                 detail=str(payload["detail"]),
                 error=None,
+                error_info=None,
                 phase=_as_text(payload.get("phase")),
                 progress_percent=_as_float(payload.get("progress_percent")),
                 eta_seconds=_as_float(payload.get("eta_seconds")),
@@ -85,6 +88,7 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
             detail="Transcript completed.",
             transcript_result=transcript_result,
             error=None,
+            error_info=None,
             phase="completed",
             progress_percent=100.0,
             eta_seconds=0.0,
@@ -94,13 +98,15 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
         write_manifest(job_dir, updated_manifest)
         return updated_manifest
     except Exception as exc:
+        error_info = classify_exception(exc)
         updated_manifest = _merge_existing_manifest(
             manifest,
             settings=settings,
             status="error",
-            detail="Transcript failed.",
+            detail="转写失败。",
             transcript_result=None,
-            error=str(exc),
+            error=None,
+            error_info=error_info,
             phase="failed",
             progress_percent=None,
             eta_seconds=None,
@@ -134,6 +140,7 @@ def prepare_job(raw_input: str, settings: Settings, action: JobAction) -> Prepar
             download_result=None,
             transcript_result=None,
             error=None,
+            error_info=None,
             phase="queued",
             progress_percent=0.0,
             eta_seconds=None,
@@ -156,6 +163,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
         download_result=None,
         transcript_result=None,
         error=None,
+        error_info=None,
         phase="downloading",
         progress_percent=8.0,
         eta_seconds=None,
@@ -179,6 +187,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
                 download_result=download_result,
                 transcript_result=None,
                 error=None,
+                error_info=None,
                 phase="extracting_audio",
                 progress_percent=34.0,
                 eta_seconds=None,
@@ -196,6 +205,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
                     download_result=download_result,
                     transcript_result=None,
                     error=None,
+                    error_info=None,
                     phase=_as_text(payload.get("phase")),
                     progress_percent=_as_float(payload.get("progress_percent")),
                     eta_seconds=_as_float(payload.get("eta_seconds")),
@@ -212,6 +222,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
             download_result=download_result,
             transcript_result=transcript_result,
             error=None,
+            error_info=None,
             phase="completed",
             progress_percent=100.0,
             eta_seconds=0.0,
@@ -221,14 +232,16 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
         write_manifest(prepared_job.job_dir, manifest)
         return manifest
     except Exception as exc:
+        error_info = classify_exception(exc)
         manifest = _build_manifest(
             settings=settings,
             prepared_job=prepared_job,
             status="error",
-            detail="Job failed.",
+            detail="下载或转写失败。",
             download_result=download_result,
             transcript_result=transcript_result,
-            error=str(exc),
+            error=None,
+            error_info=error_info,
             phase="failed",
             progress_percent=None,
             eta_seconds=None,
@@ -248,6 +261,7 @@ def _write_status(
     download_result: Optional[DownloadResult],
     transcript_result: Optional[TranscriptResult],
     error: Optional[str],
+    error_info: Optional[UserFacingError],
     phase: Optional[str],
     progress_percent: Optional[float],
     eta_seconds: Optional[float],
@@ -264,6 +278,7 @@ def _write_status(
             download_result=download_result,
             transcript_result=transcript_result,
             error=error,
+            error_info=error_info,
             phase=phase,
             progress_percent=progress_percent,
             eta_seconds=eta_seconds,
@@ -282,6 +297,7 @@ def _build_manifest(
     download_result: Optional[DownloadResult],
     transcript_result: Optional[TranscriptResult],
     error: Optional[str],
+    error_info: Optional[UserFacingError],
     phase: Optional[str],
     progress_percent: Optional[float],
     eta_seconds: Optional[float],
@@ -311,7 +327,7 @@ def _build_manifest(
         "audio_path": relative_to(settings.output_dir, audio_path),
         "transcript_path": relative_to(settings.output_dir, transcript_path),
         "transcript_preview": _truncate_text(transcript_text),
-        "error": error,
+        **_build_error_fields(error=error, error_info=error_info),
         "phase": phase,
         "progress_percent": progress_percent,
         "eta_seconds": eta_seconds,
@@ -328,6 +344,7 @@ def _write_existing_status(
     status: str,
     detail: str,
     error: Optional[str],
+    error_info: Optional[UserFacingError],
     phase: Optional[str],
     progress_percent: Optional[float],
     eta_seconds: Optional[float],
@@ -343,6 +360,7 @@ def _write_existing_status(
             detail=detail,
             transcript_result=None,
             error=error,
+            error_info=error_info,
             phase=phase,
             progress_percent=progress_percent,
             eta_seconds=eta_seconds,
@@ -360,6 +378,7 @@ def _merge_existing_manifest(
     detail: str,
     transcript_result: Optional[TranscriptResult],
     error: Optional[str],
+    error_info: Optional[UserFacingError],
     phase: Optional[str],
     progress_percent: Optional[float],
     eta_seconds: Optional[float],
@@ -369,7 +388,7 @@ def _merge_existing_manifest(
     updated = dict(manifest)
     updated["status"] = status
     updated["detail"] = detail
-    updated["error"] = error
+    updated.update(_build_error_fields(error=error, error_info=error_info))
     updated["phase"] = phase
     updated["progress_percent"] = progress_percent
     updated["eta_seconds"] = eta_seconds
@@ -416,6 +435,29 @@ def _resolve_audio_path(
 
     candidate = download_result.video_path.with_suffix(".wav")
     return candidate if candidate.exists() else None
+
+
+def _build_error_fields(
+    *,
+    error: Optional[str],
+    error_info: Optional[UserFacingError],
+) -> dict[str, Optional[str]]:
+    if error_info is None:
+        return {
+            "error": error,
+            "error_code": None,
+            "error_kind": None,
+            "error_hint": None,
+            "technical_error": None,
+        }
+
+    return {
+        "error": error_info.message,
+        "error_code": error_info.code,
+        "error_kind": error_info.kind,
+        "error_hint": error_info.hint,
+        "technical_error": error_info.technical_detail,
+    }
 
 
 def _resolve_transcript_path(

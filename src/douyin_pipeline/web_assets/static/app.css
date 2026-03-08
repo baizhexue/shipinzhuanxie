@@ -510,6 +510,32 @@ input[type="text"]:focus {
   font-size: 0.95rem;
 }
 
+.result-error {
+  display: grid;
+  gap: 10px;
+}
+
+.technical-error {
+  border: 1px solid rgba(45, 91, 132, 0.18);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.technical-error summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.technical-error pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
 .flash {
   margin-top: 16px;
   padding: 14px 16px;

@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0] - 2026-03-09
+
+### Added
+
+- Docker deployment files: `Dockerfile`, `docker-compose.yml`, and `.dockerignore`.
+- GitHub issue templates and pull request template.
+- Structured error classification with user-facing hints for common download and transcription failures.
+- Error classification tests.
+
+### Changed
+
+- Web UI now returns structured API errors with `error_code` and `error_hint`.
+- Web result panel now shows user-facing hints and expandable technical details.
+- Telegram bot now sends friendlier failure messages with hints when available.
+- Export script now includes Docker and repository-governance files.
+
 ## [0.2.0] - 2026-03-09
 
 ### Added

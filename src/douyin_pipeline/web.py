@@ -8,6 +8,7 @@ from typing import Any, Optional
 from douyin_pipeline import __version__
 from douyin_pipeline.config import Settings, load_settings
 from douyin_pipeline.doctor import has_failures, run_checks
+from douyin_pipeline.errors import classify_exception
 from douyin_pipeline.jobs import list_recent_manifests, read_manifest, to_public_job, write_manifest
 from douyin_pipeline.pipeline import prepare_job, run_prepared_job, transcribe_existing_job
 
@@ -21,7 +22,7 @@ def create_app(settings: Optional[Settings] = None):
     try:
         from fastapi import FastAPI, HTTPException
         from fastapi.concurrency import run_in_threadpool
-        from fastapi.responses import HTMLResponse
+        from fastapi.responses import HTMLResponse, JSONResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as exc:
         raise RuntimeError("Web UI requires `pip install -e .[web]`.") from exc
@@ -77,16 +78,34 @@ def create_app(settings: Optional[Settings] = None):
         action = str(payload.get("action", "download")).strip()
 
         if not raw_input:
-            raise HTTPException(status_code=400, detail="Please provide a share link or text.")
+            return _error_response(
+                JSONResponse,
+                status_code=400,
+                detail="请先粘贴分享文案或链接。",
+                code="invalid_input",
+                hint="支持完整分享文案、短链或直接 URL。",
+            )
         if action not in {"download", "run"}:
-            raise HTTPException(status_code=400, detail="Only `download` and `run` are supported.")
+            return _error_response(
+                JSONResponse,
+                status_code=400,
+                detail="当前只支持 `download` 和 `run` 两种任务模式。",
+                code="invalid_action",
+            )
 
         request_settings = _build_request_settings(app.state.settings, payload)
 
         try:
             prepared_job = prepare_job(raw_input, request_settings, action)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            error_info = classify_exception(exc)
+            return _error_response(
+                JSONResponse,
+                status_code=400,
+                detail=error_info.message,
+                code=error_info.code,
+                hint=error_info.hint,
+            )
 
         thread = Thread(
             target=_run_job_in_background,
@@ -108,11 +127,28 @@ def create_app(settings: Optional[Settings] = None):
         job_dir = app.state.settings.output_dir / job_id
         manifest = read_manifest(job_dir)
         if manifest is None:
-            raise HTTPException(status_code=404, detail="Job not found.")
+            return _error_response(
+                JSONResponse,
+                status_code=404,
+                detail="任务不存在。",
+                code="job_not_found",
+                hint="刷新最近任务列表后再试。",
+            )
         if manifest.get("status") in {"queued", "downloading", "transcribing", "running"}:
-            raise HTTPException(status_code=409, detail="Job is still running.")
+            return _error_response(
+                JSONResponse,
+                status_code=409,
+                detail="任务仍在执行中，暂时不能再次发起转文字。",
+                code="job_running",
+            )
         if not manifest.get("video_path"):
-            raise HTTPException(status_code=400, detail="This job has no video to transcribe.")
+            return _error_response(
+                JSONResponse,
+                status_code=400,
+                detail="这条任务没有可转写的视频文件。",
+                code="video_missing_for_transcribe",
+                hint="请先完成视频下载。",
+            )
         if manifest.get("transcript_path"):
             return to_public_job(manifest)
 
@@ -203,4 +239,22 @@ def _build_request_settings(base: Settings, payload: dict[str, Any]) -> Settings
         cookies_from_browser=browser_value or base.cookies_from_browser,
         whisper_model=model_value or base.whisper_model,
         whisper_device=device_value or base.whisper_device,
+    )
+
+
+def _error_response(
+    response_class,
+    *,
+    status_code: int,
+    detail: str,
+    code: str,
+    hint: Optional[str] = None,
+):
+    return response_class(
+        status_code=status_code,
+        content={
+            "detail": detail,
+            "error_code": code,
+            "error_hint": hint,
+        },
     )

@@ -195,6 +195,33 @@ output/
 
 - 版本号定义在 [pyproject.toml](pyproject.toml) 和 [__init__.py](src/douyin_pipeline/__init__.py)
 - 推送 `v*` tag 会触发 [release.yml](.github/workflows/release.yml) 创建 GitHub Release
+- Issue / PR 模板已经放在 `.github/`
+
+## Docker
+
+如果你想用容器启动：
+
+```bash
+docker compose up --build web
+```
+
+默认会启动 Web 服务并绑定：
+
+```text
+http://127.0.0.1:4444
+```
+
+如果还要启动 Telegram 机器人：
+
+```bash
+docker compose --profile telegram up --build
+```
+
+相关文件：
+
+- [Dockerfile](Dockerfile)
+- [docker-compose.yml](docker-compose.yml)
+- [.dockerignore](.dockerignore)
 
 发布到 GitHub 前，建议先导出一份干净目录：
 
