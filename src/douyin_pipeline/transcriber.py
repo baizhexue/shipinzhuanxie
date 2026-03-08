@@ -195,7 +195,15 @@ def _normalize_transcript_text(text: str, *, detected_language: str) -> str:
     if converter is None:
         return normalized
 
-    return converter.convert(normalized)
+    simplified = converter.convert(normalized)
+    return _normalize_mainland_terms(simplified)
+
+
+def _normalize_mainland_terms(text: str) -> str:
+    normalized = text
+    for source, target in _MAINLAND_TERM_REPLACEMENTS:
+        normalized = normalized.replace(source, target)
+    return normalized
 
 
 def _should_convert_to_simplified(text: str, detected_language: str) -> bool:
@@ -229,6 +237,23 @@ def _contains_japanese_kana(text: str) -> bool:
 
 def _contains_hangul(text: str) -> bool:
     return bool(re.search(r"[\uac00-\ud7af]", text))
+
+
+_MAINLAND_TERM_REPLACEMENTS = (
+    ("连结", "链接"),
+    ("影片", "视频"),
+    ("视讯", "视频"),
+    ("资讯", "信息"),
+    ("软体", "软件"),
+    ("程式", "程序"),
+    ("帐号", "账号"),
+    ("帐户", "账户"),
+    ("联络", "联系"),
+    ("装置", "设备"),
+    ("透过", "通过"),
+    ("录影", "录像"),
+    ("登入", "登录"),
+)
 
 
 def _audio_duration_seconds(audio_path: Path) -> float:

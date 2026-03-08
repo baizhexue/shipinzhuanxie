@@ -17,7 +17,7 @@
 - 在 `yt-dlp` 失败时回退到浏览器辅助下载
 - 用 `ffmpeg` 提取音频
 - 用 `faster-whisper` 做语音转写
-- 转写结果默认归一化为简体中文
+- 转写结果默认归一化为简体中文，并补一层大陆常用词汇修正
 - 任务结果输出为独立目录和 `manifest.json`
 
 ## 边界
@@ -187,6 +187,7 @@ output/
 - [.gitignore](.gitignore)
 - [LICENSE](LICENSE)
 - [.env.example](.env.example)
+- [.github/workflows/ci.yml](.github/workflows/ci.yml)
 
 发布到 GitHub 前，建议先导出一份干净目录：
 
@@ -207,6 +208,17 @@ release\github
 - 浏览器临时 profile
 - 日志
 - 本地虚拟环境
+
+## 测试
+
+本地可以直接跑：
+
+```bash
+python -m compileall src tests
+python -m unittest discover -s tests -v
+```
+
+GitHub Actions 会在 `main` 和 PR 上自动执行同样的基础检查。
 
 ## 许可证
 
