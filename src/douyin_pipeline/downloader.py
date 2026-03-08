@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import json
+import re
 import subprocess
 from typing import Optional
 
@@ -17,6 +18,15 @@ MEDIA_SUFFIXES = {
     ".webm",
     ".m4v",
 }
+AUDIO_SUFFIXES = {
+    ".m4a",
+    ".aac",
+    ".mp3",
+    ".opus",
+    ".wav",
+    ".flac",
+}
+ADAPTIVE_STREAM_PATTERN = re.compile(r"\.f\d+$")
 
 
 @dataclass(frozen=True)
@@ -67,10 +77,16 @@ def _download_with_ytdlp(
         "--fragment-retries",
         "2",
         "--print-json",
+        "--merge-output-format",
+        "mp4",
         "-o",
         output_template,
         source_url,
     ]
+
+    ffmpeg_location = _resolve_ffmpeg_location(settings)
+    if ffmpeg_location:
+        command.extend(["--ffmpeg-location", ffmpeg_location])
 
     if settings.cookies_from_browser:
         command.extend(["--cookies-from-browser", settings.cookies_from_browser])
@@ -134,5 +150,37 @@ def _find_downloaded_video(job_dir: Path) -> Path:
     if not candidates:
         raise RuntimeError("Download command finished but no video file was found.")
 
+    merged_candidates = [
+        path
+        for path in candidates
+        if not ADAPTIVE_STREAM_PATTERN.search(path.stem)
+    ]
+    if merged_candidates:
+        merged_candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        return merged_candidates[0]
+
+    if _has_separate_audio_stream(job_dir):
+        raise RuntimeError(
+            "Adaptive streams were downloaded but not merged into a playable file. "
+            "yt-dlp needs ffmpeg access to assemble Bilibili-style video and audio streams."
+        )
+
     candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return candidates[0]
+
+
+def _resolve_ffmpeg_location(settings: Settings) -> Optional[str]:
+    if not settings.ffmpeg_cmd:
+        return None
+
+    candidate = Path(settings.ffmpeg_cmd[0]).expanduser()
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
+def _has_separate_audio_stream(job_dir: Path) -> bool:
+    return any(
+        path.is_file() and path.suffix.lower() in AUDIO_SUFFIXES
+        for path in job_dir.iterdir()
+    )

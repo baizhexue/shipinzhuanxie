@@ -2,7 +2,7 @@
 
 一个轻量的 Python 项目，用来处理这条链路：
 
-`抖音分享文案/链接 -> 下载视频 -> 提取音频 -> 转成文字`
+`抖音 / Bilibili 分享文案或链接 -> 下载视频 -> 提取音频 -> 转成文字`
 
 当前项目提供 3 个入口：
 
@@ -12,9 +12,9 @@
 
 ## 功能
 
-- 从抖音分享文案里提取 URL
+- 从抖音 / Bilibili 分享文案里提取 URL
 - 调用 `yt-dlp` 下载视频
-- 在 `yt-dlp` 失败时回退到浏览器辅助下载
+- 在 `yt-dlp` 处理抖音受限链接失败时回退到浏览器辅助下载
 - 用 `ffmpeg` 提取音频
 - 用 `faster-whisper` 做语音转写
 - 转写结果默认归一化为简体中文，并补一层大陆常用词汇修正
@@ -79,12 +79,14 @@ python -m douyin_pipeline doctor --skip-asr
 
 ```bash
 python -m douyin_pipeline download "https://v.douyin.com/xxxxxx/"
+python -m douyin_pipeline download "https://www.bilibili.com/video/BV133NwzHEgy/"
 ```
 
 下载并转写：
 
 ```bash
 python -m douyin_pipeline run "复制打开抖音，看看 https://v.douyin.com/xxxxxx/"
+python -m douyin_pipeline run "https://www.bilibili.com/video/BV133NwzHEgy/"
 ```
 
 对本地视频补做转写：
@@ -129,7 +131,7 @@ Telegram 机器人支持作为任务入口。
 
 行为：
 
-- 给机器人发送抖音链接或完整分享文案
+- 给机器人发送抖音或 Bilibili 链接、完整分享文案
 - 机器人直接执行 `download + transcribe`
 - 处理中会按阶段回推任务进度
 - 完成后回发任务摘要、转写预览和 `.txt` 文件

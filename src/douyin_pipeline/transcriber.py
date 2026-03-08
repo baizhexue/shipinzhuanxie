@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
@@ -127,22 +127,7 @@ def _transcribe_audio(
     total_duration: Optional[float],
     progress_callback: Optional[ProgressCallback] = None,
 ) -> str:
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError as exc:
-        raise RuntimeError(
-            "faster-whisper is not installed. Run: pip install -e .[asr]"
-        ) from exc
-
-    model = WhisperModel(
-        settings.whisper_model,
-        device=settings.whisper_device,
-    )
-    segments, info = model.transcribe(
-        str(audio_path),
-        vad_filter=True,
-        beam_size=1,
-    )
+    segments, info = _run_transcription_with_fallback(audio_path, settings)
     resolved_duration = total_duration or float(getattr(info, "duration", 0.0) or 0.0)
     _emit_progress(
         progress_callback,
@@ -181,6 +166,61 @@ def _transcribe_audio(
         "\n".join(lines),
         detected_language=detected_language,
     )
+
+
+def _create_whisper_model(settings: Settings):
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise RuntimeError(
+            "faster-whisper is not installed. Run: pip install -e .[asr]"
+        ) from exc
+
+    try:
+        return WhisperModel(
+            settings.whisper_model,
+            device=settings.whisper_device,
+        )
+    except Exception as exc:
+        if settings.whisper_device == "auto" and _should_retry_whisper_on_cpu(exc):
+            return WhisperModel(
+                settings.whisper_model,
+                device="cpu",
+            )
+        raise
+
+
+def _run_transcription_with_fallback(audio_path: Path, settings: Settings):
+    model = _create_whisper_model(settings)
+    try:
+        return model.transcribe(
+            str(audio_path),
+            vad_filter=True,
+            beam_size=1,
+        )
+    except Exception as exc:
+        if settings.whisper_device == "auto" and _should_retry_whisper_on_cpu(exc):
+            cpu_settings = replace(settings, whisper_device="cpu")
+            cpu_model = _create_whisper_model(cpu_settings)
+            return cpu_model.transcribe(
+                str(audio_path),
+                vad_filter=True,
+                beam_size=1,
+            )
+        raise
+
+
+def _should_retry_whisper_on_cpu(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    markers = (
+        "cublas",
+        "cudnn",
+        "cuda",
+        "cublas64_12.dll",
+        "libcublas",
+        "libcudnn",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _normalize_transcript_text(text: str, *, detected_language: str) -> str:

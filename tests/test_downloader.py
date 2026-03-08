@@ -1,0 +1,59 @@
+﻿from __future__ import annotations
+
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+from douyin_pipeline.config import Settings
+from douyin_pipeline.downloader import _download_with_ytdlp, _find_downloaded_video
+
+
+class DownloaderTests(unittest.TestCase):
+    def test_download_command_passes_ffmpeg_location_for_merge(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            job_dir = root / 'job-1'
+            job_dir.mkdir()
+            ffmpeg_bin = root / 'ffmpeg.exe'
+            ffmpeg_bin.write_bytes(b'ffmpeg')
+            settings = Settings(
+                output_dir=root,
+                cookies_file=None,
+                cookies_from_browser=None,
+                ffmpeg_cmd=(str(ffmpeg_bin),),
+                ytdlp_cmd=('yt-dlp',),
+                whisper_model='small',
+                whisper_device='cpu',
+            )
+
+            def fake_run(command, capture_output, text, check):
+                self.assertIn('--merge-output-format', command)
+                self.assertIn('mp4', command)
+                self.assertIn('--ffmpeg-location', command)
+                self.assertIn(str(ffmpeg_bin), command)
+                (job_dir / 'demo.mp4').write_bytes(b'video')
+                return SimpleNamespace(returncode=0, stdout='{"title": "demo"}\n', stderr='')
+
+            with patch('douyin_pipeline.downloader.subprocess.run', side_effect=fake_run):
+                result = _download_with_ytdlp('https://www.bilibili.com/video/BV1demo', settings, job_dir)
+
+            self.assertEqual(result.title, 'demo')
+            self.assertEqual(result.video_path.name, 'demo.mp4')
+            self.assertTrue(result.video_path.exists())
+
+    def test_find_downloaded_video_rejects_unmerged_adaptive_streams(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            job_dir = Path(tmp_dir)
+            (job_dir / 'demo.f137.mp4').write_bytes(b'video-only')
+            (job_dir / 'demo.f140.m4a').write_bytes(b'audio-only')
+
+            with self.assertRaises(RuntimeError) as context:
+                _find_downloaded_video(job_dir)
+
+        self.assertIn('Adaptive streams were downloaded but not merged', str(context.exception))
+
+
+if __name__ == '__main__':
+    unittest.main()

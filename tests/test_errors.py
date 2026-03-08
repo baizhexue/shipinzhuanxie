@@ -24,6 +24,17 @@ class ErrorClassificationTests(unittest.TestCase):
         self.assertEqual(actual.code, "unknown_error")
         self.assertEqual(actual.kind, "unknown")
 
+    def test_classifies_unmerged_adaptive_streams(self) -> None:
+        actual = classify_exception(
+            RuntimeError(
+                "Adaptive streams were downloaded but not merged into a playable file. "
+                "yt-dlp needs ffmpeg access to assemble Bilibili-style video and audio streams."
+            )
+        )
+        self.assertEqual(actual.code, "ffmpeg_merge_required")
+        self.assertEqual(actual.kind, "dependency")
+        self.assertIn("ffmpeg", actual.hint)
+
 
 if __name__ == "__main__":
     unittest.main()

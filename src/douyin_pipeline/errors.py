@@ -60,7 +60,16 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="download_failed",
             kind="download",
             message="视频下载失败。",
-            hint="确认链接有效、网络正常；如果是抖音视频，必要时提供浏览器 cookies 或 cookies.txt。",
+            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 等分离流视频则需要 ffmpeg 可用。",
+            technical_detail=detail,
+        )
+
+    if "adaptive streams were downloaded but not merged" in lowered:
+        return _error(
+            code="ffmpeg_merge_required",
+            kind="dependency",
+            message="下载到了分离的视频流和音频流，但还没有合并成可播放文件。",
+            hint="请确认 ffmpeg 可用，并且 yt-dlp 能访问到 ffmpeg；这类 Bilibili 视频通常需要合并后才能继续转写。",
             technical_detail=detail,
         )
 
