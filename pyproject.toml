@@ -1,10 +1,10 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "douyin-pipeline"
-version = "0.4.0"
+version = "0.4.1"
 description = "Lightweight Douyin video download and transcription pipeline."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -40,3 +40,4 @@ douyin_pipeline = [
   "web_assets/static/app.css",
   "web_assets/static/app.js",
 ]
+

@@ -1,59 +1,75 @@
-# Changelog
+﻿# 更新日志
 
-All notable changes to this project are documented in this file.
+项目的重要变更都会记录在这里。
+
+## [0.4.1] - 2026-03-09
+
+### 功能新增
+
+- Telegram 机器人面向用户的提示文案全面切换为中文，包括帮助信息、任务开始、进度回推、失败说明、完成通知和文件说明。
+- 首页头部文案重新整理为更明确的产品表达，突出“视频转写助手”的定位。
+
+### 修复
+
+- 移除了首页头部中不适合作为产品标题的英文发布型文案，避免首页首屏表达混乱。
+- 统一 Telegram 回推消息中的任务标识展示方式，将 `job_id` 调整为更易理解的中文字段。
+
+### 优化
+
+- 统一网页首页与 Telegram 入口的语言风格，减少中英混用。
+- 让变更记录按中文语义归档，后续迭代可直接按版本补充功能、修复和优化内容。
 
 ## [0.4.0] - 2026-03-09
 
-### Added
+### 功能新增
 
-- Web-managed Telegram runtime configuration stored outside the public output directory.
-- Telegram progress push updates during download/transcription phases.
-- History pagination, search, filtering, and deletion support in the Web API.
-- Web API tests for history listing, deletion, and Telegram settings management.
+- 新增由 Web 托管的 Telegram 运行时配置，配置文件存放在公开输出目录之外。
+- 新增 Telegram 处理过程中的阶段性进度回推能力。
+- 新增历史任务分页、搜索、筛选和删除接口。
+- 新增历史记录删除、分页和 Telegram 设置管理相关的 Web API 测试。
 
-### Changed
+### 功能改动
 
-- Web UI moved from a single overloaded panel to a lightweight workspace layout:
-  task center, history, and system settings.
-- Job detail area now supports deleting finished jobs and triggering secondary transcription.
-- Telegram bot can now be started and stopped from the Web UI.
+- Web 界面从单个拥挤结果页调整为轻量工作台结构，拆分为任务中心、历史记录和系统设置三个工作区。
+- 任务详情区支持直接删除已完成任务，并支持对已下载视频发起二次转写。
+- Telegram 机器人可以直接由 Web 页面启动和停止，不再依赖单独常驻脚本作为唯一入口。
 
 ## [0.3.0] - 2026-03-09
 
-### Added
+### 功能新增
 
-- Docker deployment files: `Dockerfile`, `docker-compose.yml`, and `.dockerignore`.
-- GitHub issue templates and pull request template.
-- Structured error classification with user-facing hints for common download and transcription failures.
-- Error classification tests.
+- 新增 Docker 部署文件：`Dockerfile`、`docker-compose.yml` 和 `.dockerignore`。
+- 新增 GitHub Issue 模板和 Pull Request 模板。
+- 新增结构化错误分类能力，为常见下载和转写失败提供面向用户的提示。
+- 新增错误分类相关测试。
 
-### Changed
+### 功能改动
 
-- Web UI now returns structured API errors with `error_code` and `error_hint`.
-- Web result panel now shows user-facing hints and expandable technical details.
-- Telegram bot now sends friendlier failure messages with hints when available.
-- Export script now includes Docker and repository-governance files.
+- Web API 返回结构化错误字段 `error_code` 和 `error_hint`。
+- Web 结果区支持展示更友好的错误提示和可展开的技术细节。
+- Telegram 机器人在失败场景下会带上更友好的提示信息。
+- 导出脚本补充了 Docker 和仓库治理文件的导出能力。
 
 ## [0.2.0] - 2026-03-09
 
-### Added
+### 功能新增
 
-- GitHub Actions CI for compile checks and unit tests.
-- GitHub Release workflow triggered by `v*` tags.
-- `CONTRIBUTING.md` for local setup, checks, and release steps.
-- Web API tests for job creation and re-transcription flow.
-- Telegram bot routing tests for authorization, `/web`, and valid-link handling.
+- 新增 GitHub Actions CI，用于编译检查和单元测试。
+- 新增由 `v*` 标签触发的 GitHub Release 工作流。
+- 新增 `CONTRIBUTING.md`，说明本地开发、检查和发布流程。
+- 新增 Web API 测试，覆盖任务创建和二次转写流程。
+- 新增 Telegram 机器人路由测试，覆盖鉴权、`/web` 和有效链接处理。
 
-### Changed
+### 功能改动
 
-- Transcription output now applies simplified-Chinese normalization and a small mainland wording normalization layer.
-- Package version is now sourced as `0.2.0`.
-- FastAPI app version now follows the package version.
+- 转写结果默认执行简体中文归一化，并补充小范围大陆常用词汇替换。
+- 包版本统一从 `0.2.0` 开始在代码中显式维护。
+- FastAPI 应用版本号与包版本号保持一致。
 
 ## [0.1.0] - 2026-03-09
 
-### Added
+### 功能新增
 
-- CLI, Web UI, and Telegram bot entry points.
-- Douyin download pipeline with browser-assisted fallback.
-- Local file-based job manifests and transcription pipeline.
+- 提供 CLI、Web 页面和 Telegram 机器人三个入口。
+- 提供带浏览器辅助回退的抖音下载链路。
+- 提供基于本地文件和 `manifest.json` 的任务记录与转写流水线。
