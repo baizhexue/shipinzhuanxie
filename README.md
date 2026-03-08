@@ -187,7 +187,14 @@ output/
 - [.gitignore](.gitignore)
 - [LICENSE](LICENSE)
 - [.env.example](.env.example)
+- [CHANGELOG.md](CHANGELOG.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
 - [.github/workflows/ci.yml](.github/workflows/ci.yml)
+
+发布相关：
+
+- 版本号定义在 [pyproject.toml](pyproject.toml) 和 [__init__.py](src/douyin_pipeline/__init__.py)
+- 推送 `v*` tag 会触发 [release.yml](.github/workflows/release.yml) 创建 GitHub Release
 
 发布到 GitHub 前，建议先导出一份干净目录：
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Thread
 from typing import Any, Optional
 
+from douyin_pipeline import __version__
 from douyin_pipeline.config import Settings, load_settings
 from douyin_pipeline.doctor import has_failures, run_checks
 from douyin_pipeline.jobs import list_recent_manifests, read_manifest, to_public_job, write_manifest
@@ -28,7 +29,7 @@ def create_app(settings: Optional[Settings] = None):
     resolved_settings = settings or load_settings()
     resolved_settings.output_dir.mkdir(parents=True, exist_ok=True)
 
-    app = FastAPI(title="Douyin Pipeline", version="0.3.0")
+    app = FastAPI(title="Douyin Pipeline", version=__version__)
     app.state.settings = resolved_settings
 
     app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")

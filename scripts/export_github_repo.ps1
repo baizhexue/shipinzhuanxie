@@ -19,7 +19,9 @@ $fileItems = @(
     "README.md",
     ".gitignore",
     ".env.example",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
 )
 
 foreach ($item in $fileItems) {
