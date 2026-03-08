@@ -216,7 +216,7 @@ class TelegramBotRunner:
 
         if normalized == "/web":
             if not self._bot_settings.public_base_url:
-                self._client.send_message(chat_id, "Web URL is not configured.")
+                self._client.send_message(chat_id, "网页地址还没有配置。")
                 return
             self._client.send_message(chat_id, self._bot_settings.public_base_url)
             return
@@ -244,7 +244,7 @@ class TelegramBotRunner:
 
         self._client.send_message(
             chat_id,
-            f"Task received.\njob_id: {prepared_job.job_dir.name}\nStarting download and transcription.",
+            f"已收到任务。\n任务 ID：{prepared_job.job_dir.name}\n开始下载并转写，请稍等。",
         )
         progress_reporter = TelegramProgressReporter(
             self._client,
@@ -270,28 +270,28 @@ class TelegramBotRunner:
 
     def _send_failure(self, chat_id: int, manifest: dict[str, Any]) -> None:
         message_lines = [
-            "Task failed.",
-            f"job_id: {manifest.get('job_id', '-')}",
+            "任务失败。",
+            f"任务 ID：{manifest.get('job_id', '-')}",
         ]
 
         if manifest.get("error"):
-            message_lines.append(f"reason: {manifest['error']}")
+            message_lines.append(f"原因：{manifest['error']}")
 
         if manifest.get("error_hint"):
-            message_lines.append(f"hint: {manifest['error_hint']}")
+            message_lines.append(f"建议：{manifest['error_hint']}")
 
         self._client.send_message(chat_id, "\n".join(message_lines))
 
     def _send_success(self, chat_id: int, manifest: dict[str, Any]) -> None:
         public_job = to_public_job(manifest)
         summary_lines = [
-            "Task completed.",
-            f"job_id: {public_job.get('job_id', '-')}",
+            "任务完成。",
+            f"任务 ID：{public_job.get('job_id', '-')}",
         ]
 
         title = public_job.get("title")
         if title:
-            summary_lines.append(f"title: {title}")
+            summary_lines.append(f"标题：{title}")
 
         transcript_path = manifest.get("transcript_path")
         transcript_preview = manifest.get("transcript_preview") or ""
@@ -310,11 +310,11 @@ class TelegramBotRunner:
         if transcript_path:
             absolute_transcript_path = self._app_settings.output_dir / str(transcript_path)
             if absolute_transcript_path.exists():
-                caption = f"Transcript file for {public_job.get('job_id', '-')}"
+                caption = f"转写文本 - {public_job.get('job_id', '-')}"
                 try:
                     self._client.send_document(chat_id, absolute_transcript_path, caption=caption)
                 except Exception as exc:
-                    self._client.send_message(chat_id, f"Transcript file send failed: {exc}")
+                    self._client.send_message(chat_id, f"文本文件发送失败：{exc}")
 
 
 class TelegramBotClient:
@@ -505,10 +505,15 @@ def _normalize_public_base_url(value: Optional[str]) -> Optional[str]:
 
 
 def _build_public_links(public_job: dict[str, Any], base_url: str) -> list[str]:
+    label_mapping = {
+        "Video": "视频",
+        "Audio": "音频",
+        "Transcript": "文本",
+    }
     lines = []
     for file_item in public_job.get("files", []):
         url = file_item.get("url")
-        label = file_item.get("label", "File")
+        label = label_mapping.get(file_item.get("label"), "文件")
         if not url:
             continue
         lines.append(f"{label}: {base_url}{url}")
@@ -523,18 +528,18 @@ def _truncate_text(value: str, limit: int) -> str:
 
 def _help_text() -> str:
     return (
-        "Send a Douyin share link or the full share text.\n"
-        "The bot will download the video and run transcription automatically.\n"
-        "Commands:\n"
-        "/help - show this message\n"
-        "/web - show the web UI URL if configured"
+        "把抖音分享链接或完整分享文案发给我。\n"
+        "机器人会自动下载视频并转成文字。\n"
+        "命令：\n"
+        "/help - 查看帮助\n"
+        "/web - 查看网页地址"
     )
 
 
 def _build_failure_text(message: str, hint: Optional[str]) -> str:
     if not hint:
         return message
-    return f"{message}\nHint: {hint}"
+    return f"{message}\n建议：{hint}"
 
 
 class TelegramProgressReporter:
@@ -595,11 +600,11 @@ def _phase_progress_message(manifest: dict[str, Any]) -> Optional[str]:
     job_id = str(manifest.get("job_id") or "-")
 
     mapping = {
-        "queued": f"任务已排队。\njob_id: {job_id}",
-        "downloading": f"开始下载视频。\njob_id: {job_id}",
-        "extracting_audio": f"视频已下载，开始提取音频。\njob_id: {job_id}",
-        "loading_model": f"音频已准备，开始加载转写模型。\njob_id: {job_id}",
-        "writing_transcript": f"转写完成，正在写入文本文件。\njob_id: {job_id}",
+        "queued": f"任务已排队。\n任务 ID：{job_id}",
+        "downloading": f"开始下载视频。\n任务 ID：{job_id}",
+        "extracting_audio": f"视频已下载，开始提取音频。\n任务 ID：{job_id}",
+        "loading_model": f"音频已准备，开始加载转写模型。\n任务 ID：{job_id}",
+        "writing_transcript": f"转写完成，正在写入文本文件。\n任务 ID：{job_id}",
     }
     return mapping.get(phase)
 
@@ -609,7 +614,7 @@ def _transcribing_progress_message(manifest: dict[str, Any], percent: float) -> 
     processed = manifest.get("processed_seconds")
     duration = manifest.get("duration_seconds")
     eta = manifest.get("eta_seconds")
-    parts = [f"转写进度 {int(percent)}%", f"job_id: {job_id}"]
+    parts = [f"转写进度 {int(percent)}%", f"任务 ID：{job_id}"]
     if processed is not None and duration:
         parts.append(f"已处理: {_format_clock(float(processed))} / {_format_clock(float(duration))}")
     if eta is not None and float(eta) > 0:
