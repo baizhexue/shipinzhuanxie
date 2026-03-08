@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.0] - 2026-03-09
+
+### Added
+
+- Web-managed Telegram runtime configuration stored outside the public output directory.
+- Telegram progress push updates during download/transcription phases.
+- History pagination, search, filtering, and deletion support in the Web API.
+- Web API tests for history listing, deletion, and Telegram settings management.
+
+### Changed
+
+- Web UI moved from a single overloaded panel to a lightweight workspace layout:
+  task center, history, and system settings.
+- Job detail area now supports deleting finished jobs and triggering secondary transcription.
+- Telegram bot can now be started and stopped from the Web UI.
+
 ## [0.3.0] - 2026-03-09
 
 ### Added

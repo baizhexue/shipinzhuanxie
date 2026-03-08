@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 from douyin_pipeline.config import Settings
 from douyin_pipeline.downloader import DownloadResult, create_job_dir, download_video
@@ -14,6 +14,7 @@ from douyin_pipeline.transcriber import TranscriptResult, transcribe_video
 
 
 JobAction = Literal["download", "run"]
+StatusCallback = Optional[Callable[[dict[str, Any]], None]]
 
 
 @dataclass(frozen=True)
@@ -25,12 +26,23 @@ class PreparedJob:
     job_dir: Path
 
 
-def process_job(raw_input: str, settings: Settings, action: JobAction) -> dict[str, Any]:
+def process_job(
+    raw_input: str,
+    settings: Settings,
+    action: JobAction,
+    *,
+    status_callback: StatusCallback = None,
+) -> dict[str, Any]:
     prepared_job = prepare_job(raw_input, settings, action)
-    return run_prepared_job(prepared_job, settings)
+    return run_prepared_job(prepared_job, settings, status_callback=status_callback)
 
 
-def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]:
+def transcribe_existing_job(
+    job_dir: Path,
+    settings: Settings,
+    *,
+    status_callback: StatusCallback = None,
+) -> dict[str, Any]:
     manifest = read_manifest(job_dir)
     if manifest is None:
         raise ValueError("Job manifest not found.")
@@ -52,7 +64,7 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
         manifest=manifest,
         settings=settings,
         status="transcribing",
-        detail="Preparing transcript for existing video.",
+        detail="准备为已下载视频生成文字。",
         error=None,
         error_info=None,
         phase="extracting_audio",
@@ -60,6 +72,7 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
         eta_seconds=None,
         processed_seconds=0.0,
         duration_seconds=None,
+        status_callback=status_callback,
     )
 
     try:
@@ -79,13 +92,14 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
                 eta_seconds=_as_float(payload.get("eta_seconds")),
                 processed_seconds=_as_float(payload.get("processed_seconds")),
                 duration_seconds=_as_float(payload.get("duration_seconds")),
+                status_callback=status_callback,
             ),
         )
         updated_manifest = _merge_existing_manifest(
             manifest,
             settings=settings,
             status="success",
-            detail="Transcript completed.",
+            detail="转写完成。",
             transcript_result=transcript_result,
             error=None,
             error_info=None,
@@ -95,7 +109,7 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
             processed_seconds=_infer_processed_seconds(transcript_result),
             duration_seconds=_infer_processed_seconds(transcript_result),
         )
-        write_manifest(job_dir, updated_manifest)
+        _write_manifest_with_callback(job_dir, updated_manifest, status_callback)
         return updated_manifest
     except Exception as exc:
         error_info = classify_exception(exc)
@@ -113,7 +127,7 @@ def transcribe_existing_job(job_dir: Path, settings: Settings) -> dict[str, Any]
             processed_seconds=None,
             duration_seconds=None,
         )
-        write_manifest(job_dir, updated_manifest)
+        _write_manifest_with_callback(job_dir, updated_manifest, status_callback)
         raise
 
 
@@ -136,7 +150,7 @@ def prepare_job(raw_input: str, settings: Settings, action: JobAction) -> Prepar
             settings=settings,
             prepared_job=prepared_job,
             status="queued",
-            detail="Job queued.",
+            detail="任务已创建，等待处理。",
             download_result=None,
             transcript_result=None,
             error=None,
@@ -151,7 +165,12 @@ def prepare_job(raw_input: str, settings: Settings, action: JobAction) -> Prepar
     return prepared_job
 
 
-def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str, Any]:
+def run_prepared_job(
+    prepared_job: PreparedJob,
+    settings: Settings,
+    *,
+    status_callback: StatusCallback = None,
+) -> dict[str, Any]:
     download_result: Optional[DownloadResult] = None
     transcript_result: Optional[TranscriptResult] = None
 
@@ -159,7 +178,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
         settings=settings,
         prepared_job=prepared_job,
         status="downloading",
-        detail="Downloading video.",
+        detail="正在下载视频。",
         download_result=None,
         transcript_result=None,
         error=None,
@@ -169,6 +188,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
         eta_seconds=None,
         processed_seconds=None,
         duration_seconds=None,
+        status_callback=status_callback,
     )
 
     try:
@@ -183,7 +203,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
                 settings=settings,
                 prepared_job=prepared_job,
                 status="transcribing",
-                detail="Video downloaded. Preparing transcript.",
+                detail="视频下载完成，开始准备转写。",
                 download_result=download_result,
                 transcript_result=None,
                 error=None,
@@ -193,6 +213,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
                 eta_seconds=None,
                 processed_seconds=0.0,
                 duration_seconds=None,
+                status_callback=status_callback,
             )
             transcript_result = transcribe_video(
                 download_result.video_path,
@@ -211,6 +232,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
                     eta_seconds=_as_float(payload.get("eta_seconds")),
                     processed_seconds=_as_float(payload.get("processed_seconds")),
                     duration_seconds=_as_float(payload.get("duration_seconds")),
+                    status_callback=status_callback,
                 ),
             )
 
@@ -218,7 +240,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
             settings=settings,
             prepared_job=prepared_job,
             status="success",
-            detail="Job completed.",
+            detail="任务完成。",
             download_result=download_result,
             transcript_result=transcript_result,
             error=None,
@@ -229,7 +251,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
             processed_seconds=_infer_processed_seconds(transcript_result),
             duration_seconds=_infer_processed_seconds(transcript_result),
         )
-        write_manifest(prepared_job.job_dir, manifest)
+        _write_manifest_with_callback(prepared_job.job_dir, manifest, status_callback)
         return manifest
     except Exception as exc:
         error_info = classify_exception(exc)
@@ -248,7 +270,7 @@ def run_prepared_job(prepared_job: PreparedJob, settings: Settings) -> dict[str,
             processed_seconds=None,
             duration_seconds=None,
         )
-        write_manifest(prepared_job.job_dir, manifest)
+        _write_manifest_with_callback(prepared_job.job_dir, manifest, status_callback)
         raise
 
 
@@ -267,25 +289,24 @@ def _write_status(
     eta_seconds: Optional[float],
     processed_seconds: Optional[float],
     duration_seconds: Optional[float],
+    status_callback: StatusCallback,
 ) -> None:
-    write_manifest(
-        prepared_job.job_dir,
-        _build_manifest(
-            settings=settings,
-            prepared_job=prepared_job,
-            status=status,
-            detail=detail,
-            download_result=download_result,
-            transcript_result=transcript_result,
-            error=error,
-            error_info=error_info,
-            phase=phase,
-            progress_percent=progress_percent,
-            eta_seconds=eta_seconds,
-            processed_seconds=processed_seconds,
-            duration_seconds=duration_seconds,
-        ),
+    payload = _build_manifest(
+        settings=settings,
+        prepared_job=prepared_job,
+        status=status,
+        detail=detail,
+        download_result=download_result,
+        transcript_result=transcript_result,
+        error=error,
+        error_info=error_info,
+        phase=phase,
+        progress_percent=progress_percent,
+        eta_seconds=eta_seconds,
+        processed_seconds=processed_seconds,
+        duration_seconds=duration_seconds,
     )
+    _write_manifest_with_callback(prepared_job.job_dir, payload, status_callback)
 
 
 def _build_manifest(
@@ -350,24 +371,23 @@ def _write_existing_status(
     eta_seconds: Optional[float],
     processed_seconds: Optional[float],
     duration_seconds: Optional[float],
+    status_callback: StatusCallback,
 ) -> None:
-    write_manifest(
-        job_dir,
-        _merge_existing_manifest(
-            manifest,
-            settings=settings,
-            status=status,
-            detail=detail,
-            transcript_result=None,
-            error=error,
-            error_info=error_info,
-            phase=phase,
-            progress_percent=progress_percent,
-            eta_seconds=eta_seconds,
-            processed_seconds=processed_seconds,
-            duration_seconds=duration_seconds,
-        ),
+    payload = _merge_existing_manifest(
+        manifest,
+        settings=settings,
+        status=status,
+        detail=detail,
+        transcript_result=None,
+        error=error,
+        error_info=error_info,
+        phase=phase,
+        progress_percent=progress_percent,
+        eta_seconds=eta_seconds,
+        processed_seconds=processed_seconds,
+        duration_seconds=duration_seconds,
     )
+    _write_manifest_with_callback(job_dir, payload, status_callback)
 
 
 def _merge_existing_manifest(
@@ -503,3 +523,13 @@ def _as_text(value: Any) -> Optional[str]:
     if value is None or value == "":
         return None
     return str(value)
+
+
+def _write_manifest_with_callback(
+    job_dir: Path,
+    payload: dict[str, Any],
+    status_callback: StatusCallback,
+) -> None:
+    write_manifest(job_dir, payload)
+    if status_callback is not None:
+        status_callback(dict(payload))

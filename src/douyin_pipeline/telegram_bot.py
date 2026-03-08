@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Thread
-from time import sleep
+from time import monotonic, sleep
 from typing import Any, Iterable, Optional
 import json
 import mimetypes
@@ -33,6 +33,7 @@ class TelegramBotSettings:
     state_path: Path
     poll_timeout: int = DEFAULT_POLL_TIMEOUT
     retry_delay: float = DEFAULT_RETRY_DELAY
+    progress_updates: bool = True
 
 
 def load_telegram_settings(
@@ -44,6 +45,7 @@ def load_telegram_settings(
     state_path: Optional[str] = None,
     poll_timeout: int = DEFAULT_POLL_TIMEOUT,
     retry_delay: float = DEFAULT_RETRY_DELAY,
+    progress_updates: bool = True,
 ) -> TelegramBotSettings:
     import os
 
@@ -54,11 +56,17 @@ def load_telegram_settings(
     env_allowed = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
     resolved_allowed = tuple(allowed_chat_ids or _parse_allowed_chat_ids(env_allowed))
     resolved_public_base_url = public_base_url or os.getenv("DOUYIN_PUBLIC_BASE_URL")
+    env_progress_updates = os.getenv("TELEGRAM_PROGRESS_UPDATES", "")
     resolved_state_path = Path(
         state_path
         or os.getenv("TELEGRAM_STATE_PATH")
         or (app_settings.output_dir / "telegram_bot_state.json")
     ).expanduser().resolve()
+    resolved_progress_updates = (
+        progress_updates
+        if env_progress_updates == ""
+        else env_progress_updates.strip().lower() not in {"0", "false", "no", "off"}
+    )
 
     return TelegramBotSettings(
         token=resolved_token,
@@ -67,6 +75,7 @@ def load_telegram_settings(
         state_path=resolved_state_path,
         poll_timeout=max(int(poll_timeout), 1),
         retry_delay=max(float(retry_delay), 1.0),
+        progress_updates=bool(resolved_progress_updates),
     )
 
 
@@ -105,6 +114,11 @@ def main() -> int:
     parser.add_argument("--state-path", default=None, help="bot state file path")
     parser.add_argument("--poll-timeout", default=25, type=int, help="getUpdates timeout seconds")
     parser.add_argument("--retry-delay", default=3.0, type=float, help="retry delay seconds")
+    parser.add_argument(
+        "--no-progress-updates",
+        action="store_true",
+        help="disable Telegram progress updates while a job is running",
+    )
     args = parser.parse_args()
 
     app_settings = load_settings(
@@ -123,6 +137,7 @@ def main() -> int:
         state_path=args.state_path,
         poll_timeout=args.poll_timeout,
         retry_delay=args.retry_delay,
+        progress_updates=not args.no_progress_updates,
     )
     start_bot(app_settings, bot_settings)
     return 0
@@ -139,6 +154,10 @@ class TelegramBotRunner:
         self._bot_settings = bot_settings
         self._client = client
         self._state = _load_state(bot_settings.state_path)
+        self._stop_requested = False
+
+    def request_stop(self) -> None:
+        self._stop_requested = True
 
     def run_forever(self) -> None:
         self._client.delete_webhook()
@@ -148,7 +167,7 @@ class TelegramBotRunner:
             f"(allowed_chats={self._bot_settings.allowed_chat_ids or 'all'})"
         )
 
-        while True:
+        while not self._stop_requested:
             try:
                 updates = self._client.get_updates(
                     offset=self._state.get("offset"),
@@ -159,11 +178,15 @@ class TelegramBotRunner:
             except KeyboardInterrupt:
                 raise
             except Exception as exc:
+                if self._stop_requested:
+                    break
                 print(f"telegram bot poll error: {exc}")
                 sleep(self._bot_settings.retry_delay)
 
     def _handle_updates(self, updates: list[dict[str, Any]]) -> None:
         for update in updates:
+            if self._stop_requested:
+                return
             update_id = int(update["update_id"])
             self._state["offset"] = update_id + 1
             _save_state(self._bot_settings.state_path, self._state)
@@ -223,9 +246,18 @@ class TelegramBotRunner:
             chat_id,
             f"Task received.\njob_id: {prepared_job.job_dir.name}\nStarting download and transcription.",
         )
+        progress_reporter = TelegramProgressReporter(
+            self._client,
+            chat_id,
+            enabled=self._bot_settings.progress_updates,
+        )
 
         try:
-            manifest = run_prepared_job(prepared_job, self._app_settings)
+            manifest = run_prepared_job(
+                prepared_job,
+                self._app_settings,
+                status_callback=progress_reporter.handle_manifest,
+            )
         except Exception as exc:
             failed_manifest = read_manifest(prepared_job.job_dir) or {
                 "job_id": prepared_job.job_dir.name,
@@ -503,3 +535,93 @@ def _build_failure_text(message: str, hint: Optional[str]) -> str:
     if not hint:
         return message
     return f"{message}\nHint: {hint}"
+
+
+class TelegramProgressReporter:
+    def __init__(
+        self,
+        client: TelegramBotClient,
+        chat_id: int,
+        *,
+        enabled: bool,
+    ) -> None:
+        self._client = client
+        self._chat_id = chat_id
+        self._enabled = enabled
+        self._last_phase: Optional[str] = None
+        self._last_bucket = -1
+        self._last_sent_at = 0.0
+
+    def handle_manifest(self, manifest: dict[str, Any]) -> None:
+        if not self._enabled:
+            return
+
+        status = str(manifest.get("status") or "")
+        if status in {"success", "error"}:
+            return
+
+        phase = str(manifest.get("phase") or status or "")
+        if phase != self._last_phase:
+            self._last_phase = phase
+            phase_message = _phase_progress_message(manifest)
+            if phase_message:
+                self._send(phase_message)
+
+        if phase != "transcribing":
+            return
+
+        progress_percent = manifest.get("progress_percent")
+        if progress_percent is None:
+            return
+
+        percent = float(progress_percent)
+        bucket = int(percent // 20)
+        now = monotonic()
+        if bucket <= self._last_bucket:
+            return
+        if now - self._last_sent_at < 8:
+            return
+
+        self._last_bucket = bucket
+        self._send(_transcribing_progress_message(manifest, percent))
+
+    def _send(self, message: str) -> None:
+        self._last_sent_at = monotonic()
+        self._client.send_message(self._chat_id, message)
+
+
+def _phase_progress_message(manifest: dict[str, Any]) -> Optional[str]:
+    phase = str(manifest.get("phase") or "")
+    job_id = str(manifest.get("job_id") or "-")
+
+    mapping = {
+        "queued": f"任务已排队。\njob_id: {job_id}",
+        "downloading": f"开始下载视频。\njob_id: {job_id}",
+        "extracting_audio": f"视频已下载，开始提取音频。\njob_id: {job_id}",
+        "loading_model": f"音频已准备，开始加载转写模型。\njob_id: {job_id}",
+        "writing_transcript": f"转写完成，正在写入文本文件。\njob_id: {job_id}",
+    }
+    return mapping.get(phase)
+
+
+def _transcribing_progress_message(manifest: dict[str, Any], percent: float) -> str:
+    job_id = str(manifest.get("job_id") or "-")
+    processed = manifest.get("processed_seconds")
+    duration = manifest.get("duration_seconds")
+    eta = manifest.get("eta_seconds")
+    parts = [f"转写进度 {int(percent)}%", f"job_id: {job_id}"]
+    if processed is not None and duration:
+        parts.append(f"已处理: {_format_clock(float(processed))} / {_format_clock(float(duration))}")
+    if eta is not None and float(eta) > 0:
+        parts.append(f"预计剩余: {_format_clock(float(eta))}")
+    return "\n".join(parts)
+
+
+def _format_clock(seconds: float) -> str:
+    total_seconds = max(int(round(seconds)), 0)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    remaining_seconds = total_seconds % 60
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{remaining_seconds:02d}"
+    return f"{minutes}:{remaining_seconds:02d}"

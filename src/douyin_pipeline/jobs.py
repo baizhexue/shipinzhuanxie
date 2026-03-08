@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 import json
-from typing import Optional
+import shutil
 
 
 MANIFEST_NAME = "manifest.json"
+ACTIVE_STATUSES = {"queued", "downloading", "transcribing", "running"}
 
 
 def write_manifest(job_dir: Path, payload: dict[str, Any]) -> Path:
@@ -26,26 +27,58 @@ def read_manifest(job_dir: Path) -> Optional[dict[str, Any]]:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
-def list_recent_manifests(output_dir: Path, limit: int = 8) -> list[dict[str, Any]]:
-    if not output_dir.exists():
-        return []
+def list_job_manifests(
+    output_dir: Path,
+    *,
+    offset: int = 0,
+    limit: int = 20,
+    q: str = "",
+    status: Optional[str] = None,
+    action: Optional[str] = None,
+    active_only: bool = False,
+) -> dict[str, Any]:
+    manifests = _all_manifests(output_dir)
+    summary = _build_summary(manifests)
+    filtered = [
+        manifest
+        for manifest in manifests
+        if _matches_filters(
+            manifest,
+            q=q,
+            status=status,
+            action=action,
+            active_only=active_only,
+        )
+    ]
 
-    manifests: list[dict[str, Any]] = []
-    job_dirs = sorted(
-        [path for path in output_dir.iterdir() if path.is_dir() and path.name.startswith("job-")],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    safe_offset = max(offset, 0)
+    safe_limit = max(limit, 1)
+    items = filtered[safe_offset : safe_offset + safe_limit]
 
-    for job_dir in job_dirs:
-        manifest = read_manifest(job_dir)
-        if manifest is None:
-            continue
-        manifests.append(manifest)
-        if len(manifests) >= limit:
-            break
+    return {
+        "items": items,
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "filtered_total": len(filtered),
+        "total_jobs": len(manifests),
+        "has_more": safe_offset + safe_limit < len(filtered),
+        "summary": summary,
+    }
 
-    return manifests
+
+def delete_job(output_dir: Path, job_id: str) -> dict[str, Any]:
+    job_dir = output_dir / job_id
+    if not job_dir.exists() or not job_dir.is_dir():
+        raise ValueError("Job not found.")
+    if not job_dir.name.startswith("job-"):
+        raise ValueError("Only generated job folders can be deleted.")
+
+    manifest = read_manifest(job_dir) or {"job_id": job_id}
+    if manifest.get("status") in ACTIVE_STATUSES:
+        raise ValueError("Running jobs cannot be deleted.")
+
+    shutil.rmtree(job_dir)
+    return manifest
 
 
 def relative_to(base_dir: Path, target: Optional[Path]) -> Optional[str]:
@@ -81,6 +114,73 @@ def to_public_job(manifest: dict[str, Any]) -> dict[str, Any]:
     payload["can_transcribe"] = bool(
         payload.get("video_path")
         and not payload.get("transcript_path")
-        and payload.get("status") not in {"queued", "downloading", "transcribing", "running"}
+        and payload.get("status") not in ACTIVE_STATUSES
     )
+    payload["can_delete"] = payload.get("status") not in ACTIVE_STATUSES
     return payload
+
+
+def _all_manifests(output_dir: Path) -> list[dict[str, Any]]:
+    if not output_dir.exists():
+        return []
+
+    manifests: list[dict[str, Any]] = []
+    job_dirs = sorted(
+        [path for path in output_dir.iterdir() if path.is_dir() and path.name.startswith("job-")],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    for job_dir in job_dirs:
+        manifest = read_manifest(job_dir)
+        if manifest is None:
+            continue
+        manifests.append(manifest)
+
+    return manifests
+
+
+def _matches_filters(
+    manifest: dict[str, Any],
+    *,
+    q: str,
+    status: Optional[str],
+    action: Optional[str],
+    active_only: bool,
+) -> bool:
+    manifest_status = str(manifest.get("status") or "")
+    manifest_action = str(manifest.get("action") or "")
+
+    if active_only and manifest_status not in ACTIVE_STATUSES:
+        return False
+    if status and manifest_status != status:
+        return False
+    if action and manifest_action != action:
+        return False
+
+    query = q.strip().lower()
+    if not query:
+        return True
+
+    haystacks = [
+        str(manifest.get("job_id") or ""),
+        str(manifest.get("title") or ""),
+        str(manifest.get("raw_input") or ""),
+        str(manifest.get("source_url") or ""),
+    ]
+    return any(query in value.lower() for value in haystacks)
+
+
+def _build_summary(manifests: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "total": len(manifests),
+        "active": sum(1 for item in manifests if item.get("status") in ACTIVE_STATUSES),
+        "success": sum(1 for item in manifests if item.get("status") == "success"),
+        "error": sum(1 for item in manifests if item.get("status") == "error"),
+        "download_only": sum(
+            1
+            for item in manifests
+            if item.get("action") == "download" and not item.get("transcript_path")
+        ),
+        "with_transcript": sum(1 for item in manifests if item.get("transcript_path")),
+    }

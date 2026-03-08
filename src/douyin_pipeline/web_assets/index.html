@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Douyin Pipeline Studio</title>
+    <title>视频转写工作台</title>
     <link rel="stylesheet" href="/assets/app.css" />
   </head>
   <body>
@@ -12,117 +12,265 @@
     <div class="grain"></div>
 
     <main class="shell">
-      <header class="hero panel">
-        <p class="eyebrow">LOCAL CAPTURE STUDIO</p>
-        <div class="hero-copy">
-          <div>
-            <h1>贴进去，拿下来，再读成文字。</h1>
-            <p class="lede">
-              这是一个本地运行的轻量工具。输入抖音分享文案或链接，网页会帮你下载视频，
-              也可以继续提取音频并转成文字。
-            </p>
-          </div>
-          <div class="hero-note">
-            <span class="note-kicker">What this page adds</span>
-            <ul>
-              <li>单页下载和转写</li>
-              <li>环境状态自检</li>
-              <li>最近任务列表</li>
-              <li>结果文件直达</li>
-            </ul>
-          </div>
+      <header class="masthead panel">
+        <div>
+          <p class="eyebrow">VIDEO TRANSCRIPTION WORKBENCH</p>
+          <h1>入口、任务、历史、机器人，放到同一层管理。</h1>
+          <p class="lede">
+            下载与转写仍然保持轻量，但信息架构不再挤在一个结果区里。任务中心负责发起和盯进度，历史记录负责查找与删除，系统设置负责环境与 Telegram 入口。
+          </p>
+        </div>
+        <div class="masthead-note">
+          <span class="note-kicker">This release focuses on</span>
+          <ul>
+            <li>历史任务完整可查</li>
+            <li>删除与筛选能力</li>
+            <li>Telegram 进度回推</li>
+            <li>网页内配置机器人</li>
+          </ul>
         </div>
       </header>
 
-      <section class="grid">
-        <section class="panel composer">
-          <div class="section-head">
-            <span>New Job</span>
-            <button id="selfCheckBtn" class="ghost-button" type="button">检查环境</button>
-          </div>
+      <nav class="workspace-nav" aria-label="工作区导航">
+        <button class="nav-chip active" type="button" data-view-target="task-center">任务中心</button>
+        <button class="nav-chip" type="button" data-view-target="history">历史记录</button>
+        <button class="nav-chip" type="button" data-view-target="settings">系统设置</button>
+      </nav>
 
-          <form id="jobForm">
-            <label class="field">
-              <span>分享文案 / 链接</span>
-              <textarea
-                id="rawInput"
-                name="rawInput"
-                rows="7"
-                placeholder="把完整分享文案或链接粘贴到这里"
-                required
-              ></textarea>
-            </label>
+      <div id="flash" class="flash hidden"></div>
 
-            <div class="switches">
-              <label class="switch-card">
-                <input type="radio" name="action" value="download" checked />
-                <span>只下载</span>
-                <small>更快，先验证下载链路</small>
-              </label>
-              <label class="switch-card">
-                <input type="radio" name="action" value="run" />
-                <span>下载 + 转文字</span>
-                <small>完整链路，依赖 ffmpeg 和 faster-whisper</small>
-              </label>
+      <section id="view-task-center" class="view active">
+        <div class="task-grid">
+          <section class="panel composer-panel">
+            <div class="section-head">
+              <div>
+                <span class="section-kicker">New Job</span>
+                <h2>新建任务</h2>
+              </div>
             </div>
 
-            <details class="advanced">
-              <summary>高级设置</summary>
-              <div class="advanced-grid">
-                <label class="field">
-                  <span>cookies.txt 路径</span>
-                  <input id="cookiesInput" type="text" placeholder="可选，例如 D:\cookies.txt" />
+            <form id="jobForm" class="stack-form">
+              <label class="field">
+                <span>分享文案 / 链接</span>
+                <textarea
+                  id="rawInput"
+                  name="rawInput"
+                  rows="7"
+                  placeholder="把完整分享文案、短链或者视频链接粘贴到这里"
+                  required
+                ></textarea>
+              </label>
+
+              <div class="switches">
+                <label class="switch-card">
+                  <input type="radio" name="action" value="download" checked />
+                  <span>只下载</span>
+                  <small>先验证下载链路，适合首测和回收视频素材。</small>
                 </label>
-                <label class="field">
-                  <span>浏览器 cookies</span>
-                  <select id="browserCookiesInput">
-                    <option value="">不使用</option>
-                    <option value="edge">Edge</option>
-                    <option value="chrome">Chrome</option>
-                    <option value="firefox">Firefox</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>Whisper 模型</span>
-                  <input id="modelInput" type="text" value="small" />
-                </label>
-                <label class="field">
-                  <span>设备</span>
-                  <input id="deviceInput" type="text" value="auto" />
+                <label class="switch-card">
+                  <input type="radio" name="action" value="run" />
+                  <span>下载 + 转文字</span>
+                  <small>直接走完整链路，视频落地后自动做转写。</small>
                 </label>
               </div>
-            </details>
 
-            <div class="actions">
-              <button id="submitBtn" class="primary-button" type="submit">开始处理</button>
-              <p class="microcopy">建议第一次先选“只下载”，确认 `yt-dlp` 和链接链路能跑通。</p>
+              <details class="advanced">
+                <summary>高级设置</summary>
+                <div class="advanced-grid">
+                  <label class="field">
+                    <span>cookies.txt 路径</span>
+                    <input id="cookiesInput" type="text" placeholder="可选，例如 D:\cookies.txt" />
+                  </label>
+                  <label class="field">
+                    <span>浏览器 cookies</span>
+                    <select id="browserCookiesInput">
+                      <option value="">不使用</option>
+                      <option value="edge">Edge</option>
+                      <option value="chrome">Chrome</option>
+                      <option value="firefox">Firefox</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Whisper 模型</span>
+                    <input id="modelInput" type="text" value="small" />
+                  </label>
+                  <label class="field">
+                    <span>设备</span>
+                    <input id="deviceInput" type="text" value="auto" />
+                  </label>
+                </div>
+              </details>
+
+              <div class="actions-row">
+                <button id="submitBtn" class="primary-button" type="submit">开始处理</button>
+                <p class="microcopy">建议第一条任务先走“只下载”，确认当前环境对这类链接可用。</p>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel dashboard-panel">
+            <div class="section-head with-action">
+              <div>
+                <span class="section-kicker">Task Board</span>
+                <h2>任务中心</h2>
+              </div>
+              <button id="refreshDashboardBtn" class="ghost-button" type="button">刷新</button>
+            </div>
+
+            <div id="dashboardSummary" class="summary-grid"></div>
+            <div id="dashboardJobsList" class="jobs-list board-list"></div>
+            <div class="inline-link-row">
+              <button id="jumpToHistoryBtn" class="text-button" type="button">去历史记录看全部任务</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-history" class="view">
+        <section class="panel history-panel">
+          <div class="section-head with-action">
+            <div>
+              <span class="section-kicker">History</span>
+              <h2>历史记录</h2>
+            </div>
+            <button id="refreshHistoryBtn" class="ghost-button" type="button">刷新</button>
+          </div>
+
+          <form id="historyFilters" class="filter-bar">
+            <label class="field inline-field grow">
+              <span>搜索</span>
+              <input id="historySearchInput" type="text" placeholder="按标题、链接、任务 ID 搜索" />
+            </label>
+            <label class="field inline-field">
+              <span>状态</span>
+              <select id="historyStatusInput">
+                <option value="">全部状态</option>
+                <option value="queued">排队中</option>
+                <option value="downloading">下载中</option>
+                <option value="transcribing">转写中</option>
+                <option value="success">成功</option>
+                <option value="error">失败</option>
+              </select>
+            </label>
+            <label class="field inline-field">
+              <span>模式</span>
+              <select id="historyActionInput">
+                <option value="">全部模式</option>
+                <option value="download">只下载</option>
+                <option value="run">下载 + 转文字</option>
+              </select>
+            </label>
+            <label class="toggle-inline">
+              <input id="historyActiveOnlyInput" type="checkbox" />
+              <span>只看进行中</span>
+            </label>
+            <div class="filter-actions">
+              <button class="primary-button small" type="submit">应用筛选</button>
+              <button id="resetHistoryFiltersBtn" class="ghost-button" type="button">重置</button>
             </div>
           </form>
 
-          <div id="flash" class="flash hidden"></div>
+          <div id="historySummary" class="summary-grid compact"></div>
+          <div id="historyList" class="jobs-list history-list"></div>
+
+          <div class="pagination-row">
+            <button id="historyPrevBtn" class="ghost-button" type="button">上一页</button>
+            <div id="historyPager" class="pager-label">第 1 页</div>
+            <button id="historyNextBtn" class="ghost-button" type="button">下一页</button>
+          </div>
         </section>
-
-        <aside class="panel sidebar">
-          <div class="section-head">
-            <span>Runtime</span>
-            <button id="refreshJobsBtn" class="ghost-button" type="button">刷新列表</button>
-          </div>
-          <div id="doctorList" class="doctor-list"></div>
-
-          <div class="section-head jobs-head">
-            <span>Recent Jobs</span>
-          </div>
-          <div id="jobsList" class="jobs-list"></div>
-        </aside>
       </section>
 
-      <section id="resultPanel" class="panel result-panel empty">
+      <section id="view-settings" class="view">
+        <div class="settings-grid">
+          <section class="panel runtime-panel">
+            <div class="section-head with-action">
+              <div>
+                <span class="section-kicker">Runtime</span>
+                <h2>环境检查</h2>
+              </div>
+              <button id="selfCheckBtn" class="ghost-button" type="button">检查环境</button>
+            </div>
+            <div id="doctorList" class="doctor-list"></div>
+          </section>
+
+          <section class="panel telegram-panel">
+            <div class="section-head with-action">
+              <div>
+                <span class="section-kicker">Telegram</span>
+                <h2>机器人入口</h2>
+              </div>
+              <span id="telegramRuntimeBadge" class="status-pill status-running">读取中</span>
+            </div>
+
+            <form id="telegramForm" class="stack-form">
+              <div id="telegramRuntimeInfo" class="runtime-box"></div>
+
+              <label class="toggle-card">
+                <input id="telegramEnabledInput" type="checkbox" />
+                <div>
+                  <strong>启用 Telegram 机器人</strong>
+                  <p>保存后可由网页托管长轮询，不再依赖单独脚本配置。</p>
+                </div>
+              </label>
+
+              <label class="field">
+                <span>Bot Token</span>
+                <input id="telegramTokenInput" type="text" placeholder="留空表示保留当前已保存 token" />
+                <small id="telegramTokenHint" class="field-hint">当前未保存 token。</small>
+              </label>
+
+              <label class="toggle-inline subtle-toggle">
+                <input id="telegramClearTokenInput" type="checkbox" />
+                <span>保存时清空当前 token</span>
+              </label>
+
+              <label class="field">
+                <span>允许访问的 chat id</span>
+                <input id="telegramAllowedChatIdsInput" type="text" placeholder="多个 chat id 用英文逗号分隔" />
+                <small class="field-hint">留空表示不限制访问来源。</small>
+              </label>
+
+              <label class="field">
+                <span>结果链接前缀</span>
+                <input id="telegramPublicBaseUrlInput" type="text" placeholder="例如 http://127.0.0.1:8000" />
+                <small class="field-hint">用于机器人回推网页结果和文件链接。</small>
+              </label>
+
+              <div class="advanced-grid compact-grid">
+                <label class="field">
+                  <span>轮询超时</span>
+                  <input id="telegramPollTimeoutInput" type="text" inputmode="numeric" />
+                </label>
+                <label class="field">
+                  <span>失败重试间隔</span>
+                  <input id="telegramRetryDelayInput" type="text" inputmode="decimal" />
+                </label>
+              </div>
+
+              <label class="toggle-card slim">
+                <input id="telegramProgressUpdatesInput" type="checkbox" checked />
+                <div>
+                  <strong>开启任务进度回推</strong>
+                  <p>机器人会在下载开始、模型加载、转写进度推进时主动回消息。</p>
+                </div>
+              </label>
+
+              <div class="button-row">
+                <button id="saveTelegramBtn" class="primary-button" type="submit">保存配置</button>
+                <button id="startTelegramBtn" class="ghost-button" type="button">保存并启动</button>
+                <button id="stopTelegramBtn" class="ghost-button" type="button">停止机器人</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <section id="detailPanel" class="panel detail-panel empty">
         <div class="result-empty">
-          <p class="eyebrow">RESULT PREVIEW</p>
-          <h2>结果会显示在这里。</h2>
-          <p>
-            页面会展示任务状态、输出文件、文字预览。刷新页面后，最近任务也会保留下来。
-          </p>
+          <p class="eyebrow">JOB DETAIL</p>
+          <h2>选中任务后，这里会显示完整详情。</h2>
+          <p>你可以在这里查看进度、打开输出文件、继续转文字，或者删除已完成的历史任务。</p>
         </div>
       </section>
     </main>

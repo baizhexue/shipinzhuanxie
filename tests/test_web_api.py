@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -39,14 +39,67 @@ class DummyThread:
         self.started = True
 
 
+class FakeTelegramManager:
+    def __init__(self) -> None:
+        self.saved_payloads: list[dict] = []
+        self.state = {
+            "config": {
+                "enabled": False,
+                "has_token": False,
+                "token_masked": "",
+                "allowed_chat_ids": [],
+                "allowed_chat_ids_text": "",
+                "public_base_url": "http://127.0.0.1:8000",
+                "poll_timeout": 15,
+                "retry_delay": 3.0,
+                "progress_updates": True,
+            },
+            "runtime": {
+                "running": False,
+                "bot_username": None,
+                "last_error": None,
+                "mode": "managed_by_web",
+            },
+        }
+
+    def get_public_state(self) -> dict:
+        return self.state
+
+    def save_config(self, payload: dict) -> dict:
+        self.saved_payloads.append(dict(payload))
+        token = str(payload.get("token") or "").strip()
+        if payload.get("clear_token"):
+            token = ""
+        self.state = {
+            "config": {
+                "enabled": bool(payload.get("enabled", self.state["config"]["enabled"])),
+                "has_token": bool(token or self.state["config"]["has_token"]),
+                "token_masked": "123456...abcd" if (token or self.state["config"]["has_token"]) else "",
+                "allowed_chat_ids": [5515267321],
+                "allowed_chat_ids_text": str(payload.get("allowed_chat_ids", "5515267321")),
+                "public_base_url": str(
+                    payload.get("public_base_url", self.state["config"]["public_base_url"])
+                ),
+                "poll_timeout": int(payload.get("poll_timeout", 15)),
+                "retry_delay": float(payload.get("retry_delay", 3.0)),
+                "progress_updates": bool(payload.get("progress_updates", True)),
+            },
+            "runtime": {
+                "running": bool(payload.get("enabled", self.state["runtime"]["running"])),
+                "bot_username": "demo_bot" if payload.get("enabled") else None,
+                "last_error": None,
+                "mode": "managed_by_web",
+            },
+        }
+        return self.state
+
+
 class WebApiTests(unittest.TestCase):
     def setUp(self) -> None:
         DummyThread.instances = []
 
     def test_create_job_without_input_returns_structured_error(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
-            settings = _make_settings(Path(tmp_dir))
-            client = TestClient(create_app(settings))
+        with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:
             response = client.post("/api/jobs", json={"raw_input": "", "action": "download"})
 
         self.assertEqual(response.status_code, 400)
@@ -78,6 +131,10 @@ class WebApiTests(unittest.TestCase):
                         "transcript_path": None,
                         "transcript_preview": None,
                         "error": None,
+                        "error_code": None,
+                        "error_kind": None,
+                        "error_hint": None,
+                        "technical_error": None,
                         "phase": "queued",
                         "progress_percent": 0.0,
                         "eta_seconds": None,
@@ -90,8 +147,7 @@ class WebApiTests(unittest.TestCase):
             with patch("douyin_pipeline.web.prepare_job", side_effect=fake_prepare_job), patch(
                 "douyin_pipeline.web.Thread",
                 DummyThread,
-            ):
-                client = TestClient(create_app(settings))
+            ), TestClient(create_app(settings)) as client:
                 response = client.post(
                     "/api/jobs",
                     json={
@@ -106,6 +162,90 @@ class WebApiTests(unittest.TestCase):
             self.assertEqual(payload["status"], "queued")
             self.assertEqual(len(DummyThread.instances), 1)
             self.assertTrue(DummyThread.instances[0].started)
+
+    def test_jobs_endpoint_supports_summary_and_pagination(self) -> None:
+        with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:
+            output_dir = Path(tmp_dir)
+            for index, status in enumerate(["success", "error"], start=1):
+                job_dir = output_dir / f"job-{index}"
+                job_dir.mkdir(parents=True, exist_ok=True)
+                write_manifest(
+                    job_dir,
+                    {
+                        "job_id": f"job-{index}",
+                        "job_dir": f"job-{index}",
+                        "created_at": f"2026-03-09T10:00:0{index}",
+                        "action": "download",
+                        "status": status,
+                        "detail": status,
+                        "raw_input": f"https://v.douyin.com/test-{index}/",
+                        "source_url": f"https://v.douyin.com/test-{index}/",
+                        "title": f"demo-{index}",
+                        "video_path": None,
+                        "audio_path": None,
+                        "transcript_path": None,
+                        "transcript_preview": None,
+                        "error": None,
+                        "error_code": None,
+                        "error_kind": None,
+                        "error_hint": None,
+                        "technical_error": None,
+                        "phase": "completed" if status == "success" else "failed",
+                        "progress_percent": 100.0,
+                        "eta_seconds": 0.0,
+                        "processed_seconds": 1.0,
+                        "duration_seconds": 1.0,
+                    },
+                )
+
+            response = client.get("/api/jobs?limit=1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["jobs"]), 1)
+        self.assertEqual(payload["filtered_total"], 2)
+        self.assertTrue(payload["has_more"])
+        self.assertEqual(payload["summary"]["total"], 2)
+        self.assertEqual(payload["summary"]["error"], 1)
+
+    def test_delete_job_removes_completed_history_item(self) -> None:
+        with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:
+            job_dir = Path(tmp_dir) / "job-delete"
+            job_dir.mkdir(parents=True, exist_ok=True)
+            write_manifest(
+                job_dir,
+                {
+                    "job_id": "job-delete",
+                    "job_dir": "job-delete",
+                    "created_at": "2026-03-09T10:00:00",
+                    "action": "download",
+                    "status": "success",
+                    "detail": "done",
+                    "raw_input": "https://v.douyin.com/test/",
+                    "source_url": "https://v.douyin.com/test/",
+                    "title": "demo",
+                    "video_path": None,
+                    "audio_path": None,
+                    "transcript_path": None,
+                    "transcript_preview": None,
+                    "error": None,
+                    "error_code": None,
+                    "error_kind": None,
+                    "error_hint": None,
+                    "technical_error": None,
+                    "phase": "completed",
+                    "progress_percent": 100.0,
+                    "eta_seconds": 0.0,
+                    "processed_seconds": 1.0,
+                    "duration_seconds": 1.0,
+                },
+            )
+
+            response = client.delete("/api/jobs/job-delete")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["deleted_job"]["job_id"], "job-delete")
+        self.assertFalse(job_dir.exists())
 
     def test_transcribe_endpoint_updates_manifest_before_background_run(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -131,6 +271,10 @@ class WebApiTests(unittest.TestCase):
                     "transcript_path": None,
                     "transcript_preview": None,
                     "error": None,
+                    "error_code": None,
+                    "error_kind": None,
+                    "error_hint": None,
+                    "technical_error": None,
                     "phase": "completed",
                     "progress_percent": 100.0,
                     "eta_seconds": 0.0,
@@ -139,8 +283,7 @@ class WebApiTests(unittest.TestCase):
                 },
             )
 
-            with patch("douyin_pipeline.web.Thread", DummyThread):
-                client = TestClient(create_app(settings))
+            with patch("douyin_pipeline.web.Thread", DummyThread), TestClient(create_app(settings)) as client:
                 response = client.post("/api/jobs/job-1/transcribe", json={})
 
             self.assertEqual(response.status_code, 200)
@@ -152,6 +295,43 @@ class WebApiTests(unittest.TestCase):
             self.assertEqual(refreshed["status"], "transcribing")
             self.assertEqual(len(DummyThread.instances), 1)
             self.assertTrue(DummyThread.instances[0].started)
+
+    def test_telegram_settings_require_token_when_enabled(self) -> None:
+        with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:
+            client.app.state.telegram_manager = FakeTelegramManager()
+            response = client.put(
+                "/api/settings/telegram",
+                json={
+                    "enabled": True,
+                    "token": "",
+                    "allowed_chat_ids": "5515267321",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["error_code"], "telegram_token_missing")
+
+    def test_telegram_start_uses_web_managed_config(self) -> None:
+        with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:
+            fake_manager = FakeTelegramManager()
+            client.app.state.telegram_manager = fake_manager
+
+            response = client.post(
+                "/api/settings/telegram/start",
+                json={
+                    "token": "123456:demo-token",
+                    "allowed_chat_ids": "5515267321",
+                    "public_base_url": "http://127.0.0.1:8000",
+                    "progress_updates": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["config"]["enabled"])
+        self.assertTrue(payload["runtime"]["running"])
+        self.assertEqual(fake_manager.saved_payloads[0]["enabled"], True)
 
 
 if __name__ == "__main__":

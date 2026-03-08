@@ -7,7 +7,11 @@ from unittest.mock import patch
 from typing import Optional
 
 from douyin_pipeline.config import Settings
-from douyin_pipeline.telegram_bot import TelegramBotRunner, TelegramBotSettings
+from douyin_pipeline.telegram_bot import (
+    TelegramBotRunner,
+    TelegramBotSettings,
+    TelegramProgressReporter,
+)
 
 
 def _make_settings(output_dir: Path) -> Settings:
@@ -124,6 +128,36 @@ class TelegramBotTests(unittest.TestCase):
             self.assertEqual(client.messages, [])
             self.assertEqual(len(DummyThread.instances), 1)
             self.assertTrue(DummyThread.instances[0].started)
+
+    def test_progress_reporter_sends_phase_and_progress_updates(self) -> None:
+        client = FakeTelegramClient()
+        reporter = TelegramProgressReporter(client, 1001, enabled=True)
+        reporter.handle_manifest(
+            {
+                "job_id": "job-1",
+                "status": "downloading",
+                "phase": "downloading",
+            }
+        )
+
+        reporter._last_phase = "transcribing"
+        reporter._last_bucket = 1
+        reporter._last_sent_at = -999.0
+        reporter.handle_manifest(
+            {
+                "job_id": "job-1",
+                "status": "transcribing",
+                "phase": "transcribing",
+                "progress_percent": 68.0,
+                "processed_seconds": 42.0,
+                "duration_seconds": 120.0,
+                "eta_seconds": 18.0,
+            }
+        )
+
+        self.assertEqual(len(client.messages), 2)
+        self.assertIn("job-1", client.messages[0][1])
+        self.assertIn("68%", client.messages[1][1])
 
 
 if __name__ == "__main__":

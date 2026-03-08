@@ -73,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help="retry delay in seconds after polling errors",
     )
+    telegram_parser.add_argument(
+        "--no-progress-updates",
+        action="store_true",
+        help="disable Telegram progress updates while a job is running",
+    )
 
     return parser
 
@@ -149,6 +154,7 @@ def main() -> int:
                 state_path=args.state_path,
                 poll_timeout=args.poll_timeout,
                 retry_delay=args.retry_delay,
+                progress_updates=not args.no_progress_updates,
             )
             start_bot(settings, bot_settings)
             return 0
