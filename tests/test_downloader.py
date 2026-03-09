@@ -44,6 +44,39 @@ class DownloaderTests(unittest.TestCase):
             self.assertEqual(result.video_path.name, 'demo.mp4')
             self.assertTrue(result.video_path.exists())
 
+    def test_youtube_download_uses_node_js_runtime_when_available(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            job_dir = root / 'job-1'
+            job_dir.mkdir()
+            ffmpeg_bin = root / 'ffmpeg.exe'
+            ffmpeg_bin.write_bytes(b'ffmpeg')
+            settings = Settings(
+                output_dir=root,
+                cookies_file=None,
+                cookies_from_browser=None,
+                ffmpeg_cmd=(str(ffmpeg_bin),),
+                ytdlp_cmd=('yt-dlp',),
+                whisper_model='small',
+                whisper_device='cpu',
+            )
+
+            def fake_run(command, capture_output, text, encoding, errors, check):
+                self.assertIn('--js-runtimes', command)
+                runtime_index = command.index('--js-runtimes')
+                self.assertEqual(command[runtime_index + 1], 'node')
+                (job_dir / 'demo.mp4').write_bytes(b'video')
+                return SimpleNamespace(returncode=0, stdout='{"title": "demo"}\n', stderr='')
+
+            with patch('douyin_pipeline.downloader.shutil.which', side_effect=lambda name: 'C:/node.exe' if name == 'node' else None), patch(
+                'douyin_pipeline.downloader.subprocess.run',
+                side_effect=fake_run,
+            ):
+                result = _download_with_ytdlp('https://www.youtube.com/watch?v=Sdf8fc9b0mI', settings, job_dir)
+
+        self.assertEqual(result.title, 'demo')
+        self.assertEqual(result.video_path.name, 'demo.mp4')
+
     def test_find_downloaded_video_rejects_unmerged_adaptive_streams(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             job_dir = Path(tmp_dir)

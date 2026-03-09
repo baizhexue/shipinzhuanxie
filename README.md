@@ -1,8 +1,8 @@
-# douyin-pipeline
+# 视频转写助手
 
 一个轻量的 Python 项目，用来处理这条链路：
 
-`抖音 / Bilibili / 小红书 / 快手 分享文案或链接 -> 下载视频 -> 提取音频 -> 转成文字`
+`抖音 / Bilibili / 小红书 / 快手 / YouTube 分享文案或链接 -> 下载视频 -> 提取音频 -> 转成文字`
 
 当前项目提供 3 个入口：
 
@@ -12,13 +12,14 @@
 
 ## 功能
 
-- 从抖音 / Bilibili / 小红书 / 快手分享文案里提取 URL
+- 从抖音 / Bilibili / 小红书 / 快手 / YouTube 分享文案或链接里提取 URL
 - 调用 `yt-dlp` 下载视频
 - 在 `yt-dlp` 处理抖音受限链接失败时回退到浏览器辅助下载
+- 在 `yt-dlp` 处理小红书、快手页面波动时回退到页面级解析
 - 用 `ffmpeg` 提取音频
 - 用 `faster-whisper` 做语音转写
 - 转写结果默认归一化为简体中文，并补一层大陆常用词汇修正
-- 任务结果输出为独立目录和 `manifest.json`
+- 每个任务单独落盘，输出 `manifest.json` 供 Web 和 Telegram 展示状态
 
 ## 边界
 
@@ -82,6 +83,8 @@ python -m douyin_pipeline download "https://v.douyin.com/xxxxxx/"
 python -m douyin_pipeline download "https://www.bilibili.com/video/BV133NwzHEgy/"
 python -m douyin_pipeline download "http://xhslink.com/o/3gjd39CJOsa"
 python -m douyin_pipeline download "https://v.kuaishou.com/xxxxxx"
+python -m douyin_pipeline download "https://www.youtube.com/watch?v=Sdf8fc9b0mI"
+python -m douyin_pipeline download "https://www.youtube.com/shorts/HXvTmGxm2QM"
 ```
 
 下载并转写：
@@ -91,6 +94,8 @@ python -m douyin_pipeline run "复制打开抖音，看看 https://v.douyin.com/
 python -m douyin_pipeline run "https://www.bilibili.com/video/BV133NwzHEgy/"
 python -m douyin_pipeline run "http://xhslink.com/o/3gjd39CJOsa"
 python -m douyin_pipeline run "https://v.kuaishou.com/xxxxxx"
+python -m douyin_pipeline run "https://www.youtube.com/watch?v=Sdf8fc9b0mI"
+python -m douyin_pipeline run "https://www.youtube.com/shorts/HXvTmGxm2QM"
 ```
 
 对本地视频补做转写：
@@ -122,7 +127,7 @@ http://127.0.0.1:8000
 页面支持：
 
 - 创建 `只下载` 任务
-- 创建 `下载 + 转写` 任务
+- 创建 `下载 + 转文字` 任务
 - 对已下载成功的视频二次转写
 - 任务中心、历史记录、系统设置三块工作区
 - 历史任务分页、搜索、筛选和删除
@@ -135,7 +140,7 @@ Telegram 机器人支持作为任务入口。
 
 行为：
 
-- 给机器人发送抖音、Bilibili、小红书或快手链接、完整分享文案
+- 给机器人发送抖音、Bilibili、小红书、快手或 YouTube 链接、完整分享文案
 - 机器人直接执行 `download + transcribe`
 - 处理中会按阶段回推任务进度
 - 完成后回发任务摘要、转写预览和 `.txt` 文件
@@ -205,7 +210,7 @@ output/
 发布相关：
 
 - 版本号定义在 [pyproject.toml](pyproject.toml) 和 [__init__.py](src/douyin_pipeline/__init__.py)
-- 推送 `v*` tag 会触发 [release.yml](.github/workflows/release.yml) 创建 GitHub Release
+- 推送 `v*` tag 会触发 [.github/workflows/release.yml](.github/workflows/release.yml) 创建 GitHub Release
 - Issue / PR 模板已经放在 `.github/`
 
 ## Docker

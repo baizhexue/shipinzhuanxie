@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import json
 import re
+import shutil
 import subprocess
 from typing import Optional
 
@@ -76,6 +77,7 @@ def _download_with_ytdlp(
     settings: Settings,
     job_dir: Path,
 ) -> DownloadResult:
+    platform = detect_source_platform(source_url)
     output_template = str(job_dir / "%(title).80s_[%(id)s].%(ext)s")
 
     command = [
@@ -90,8 +92,14 @@ def _download_with_ytdlp(
         "mp4",
         "-o",
         output_template,
-        source_url,
     ]
+
+    if platform == "youtube":
+        js_runtime = _detect_ytdlp_js_runtime()
+        if js_runtime:
+            command.extend(["--js-runtimes", js_runtime])
+
+    command.append(source_url)
 
     ffmpeg_location = _resolve_ffmpeg_location(settings)
     if ffmpeg_location:
@@ -203,3 +211,11 @@ def _has_separate_audio_stream(job_dir: Path) -> bool:
         path.is_file() and path.suffix.lower() in AUDIO_SUFFIXES
         for path in job_dir.iterdir()
     )
+
+
+def _detect_ytdlp_js_runtime() -> Optional[str]:
+    if shutil.which("node"):
+        return "node"
+    if shutil.which("deno"):
+        return "deno"
+    return None

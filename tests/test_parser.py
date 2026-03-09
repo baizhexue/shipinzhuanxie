@@ -19,6 +19,15 @@ class ParserTests(unittest.TestCase):
     def test_detect_source_platform_recognizes_kuaishou_short_link(self) -> None:
         self.assertEqual(detect_source_platform("https://v.kuaishou.com/Jw81AFy5"), "kuaishou")
 
+    def test_detect_source_platform_recognizes_youtube_watch_url(self) -> None:
+        self.assertEqual(
+            detect_source_platform("https://www.youtube.com/watch?v=Sdf8fc9b0mI"),
+            "youtube",
+        )
+
+    def test_detect_source_platform_recognizes_youtu_be_short_url(self) -> None:
+        self.assertEqual(detect_source_platform("https://youtu.be/HXvTmGxm2QM"), "youtube")
+
 
 if __name__ == "__main__":
     unittest.main()

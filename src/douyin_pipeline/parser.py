@@ -11,6 +11,7 @@ PLATFORM_HOSTS = {
     "bilibili": ("bilibili.com", "b23.tv"),
     "xiaohongshu": ("xiaohongshu.com", "xhslink.com"),
     "kuaishou": ("kuaishou.com", "chenzhongtech.com"),
+    "youtube": ("youtube.com", "youtu.be"),
 }
 
 

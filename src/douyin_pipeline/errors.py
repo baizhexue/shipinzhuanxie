@@ -22,7 +22,7 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="invalid_input",
             kind="input",
             message="没有识别到可用链接。",
-            hint="请粘贴完整分享文案，或者直接粘贴抖音、Bilibili、小红书的视频链接。",
+            hint="请粘贴完整分享文案，或者直接粘贴抖音、Bilibili、小红书、快手、YouTube 的视频链接。",
             technical_detail=detail,
         )
 
@@ -78,7 +78,7 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="download_failed",
             kind="download",
             message="视频下载失败。",
-            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 等分离流视频需要 ffmpeg，小红书触发验证或快手页面结构变化时也会导致下载失败。",
+            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 等分离流视频需要 ffmpeg，小红书触发验证、快手页面结构变化，或 YouTube 链接受限时也会导致下载失败。",
             technical_detail=detail,
         )
 
@@ -87,7 +87,7 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="ffmpeg_merge_required",
             kind="dependency",
             message="下载到了分离的视频流和音频流，但还没有合并成可播放文件。",
-            hint="请确认 ffmpeg 可用，并且 yt-dlp 能访问到 ffmpeg；这类 Bilibili 视频通常需要合并后才能继续转写。",
+            hint="请确认 ffmpeg 可用，并且 yt-dlp 能访问到 ffmpeg；这类 Bilibili 或 YouTube 视频通常需要合并后才能继续转写。",
             technical_detail=detail,
         )
 

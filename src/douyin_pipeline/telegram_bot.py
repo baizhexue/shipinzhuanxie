@@ -528,7 +528,7 @@ def _truncate_text(value: str, limit: int) -> str:
 
 def _help_text() -> str:
     return (
-        "把抖音、Bilibili、小红书或快手的链接、完整分享文案发给我。\n"
+        "把抖音、Bilibili、小红书、快手或 YouTube 的链接、完整分享文案发给我。\n"
         "机器人会自动下载视频并转成文字。\n"
         "命令：\n"
         "/help - 查看帮助\n"

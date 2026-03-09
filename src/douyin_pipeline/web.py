@@ -49,7 +49,7 @@ def create_app(settings: Optional[Settings] = None):
         finally:
             manager.stop()
 
-    app = FastAPI(title="Douyin Pipeline", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="视频转写助手", version=__version__, lifespan=lifespan)
     app.state.settings = resolved_settings
 
     app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
@@ -335,7 +335,7 @@ def start_server(settings: Settings, *, host: str = "127.0.0.1", port: int = 800
 def main() -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Start the Douyin Pipeline web UI.")
+    parser = argparse.ArgumentParser(description="Start the video transcription web UI.")
     parser.add_argument("--host", default="127.0.0.1", help="bind host")
     parser.add_argument("--port", default=8000, type=int, help="bind port")
     parser.add_argument("--out", default=None, help="output directory")

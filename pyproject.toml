@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "douyin-pipeline"
-version = "0.7.0"
-description = "Lightweight Douyin, Bilibili, Xiaohongshu, and Kuaishou video download and transcription pipeline."
+version = "0.8.0"
+description = "Lightweight Douyin, Bilibili, Xiaohongshu, Kuaishou, and YouTube video download and transcription pipeline."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [

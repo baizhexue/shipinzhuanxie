@@ -18,6 +18,7 @@ class ErrorClassificationTests(unittest.TestCase):
         actual = classify_exception(ValueError("No URL found. Please paste the full share text or a URL."))
         self.assertEqual(actual.code, "invalid_input")
         self.assertEqual(actual.kind, "input")
+        self.assertIn("YouTube", actual.hint)
 
     def test_falls_back_to_unknown_error(self) -> None:
         actual = classify_exception(RuntimeError("something unexpected"))

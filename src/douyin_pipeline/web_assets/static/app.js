@@ -105,6 +105,7 @@ function formatPlatform(platform, sourceUrl = "") {
       bilibili: "Bilibili",
       xiaohongshu: "小红书",
       kuaishou: "快手",
+      youtube: "YouTube",
       unknown: "未知来源",
     }[normalized] || normalized || "未知来源"
   );
@@ -116,6 +117,7 @@ function inferPlatformFromUrl(sourceUrl) {
   if (value.includes("bilibili.com") || value.includes("b23.tv")) return "bilibili";
   if (value.includes("xiaohongshu.com") || value.includes("xhslink.com")) return "xiaohongshu";
   if (value.includes("kuaishou.com") || value.includes("chenzhongtech.com")) return "kuaishou";
+  if (value.includes("youtube.com") || value.includes("youtu.be")) return "youtube";
   return "unknown";
 }
 
