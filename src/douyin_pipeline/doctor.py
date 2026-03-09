@@ -8,6 +8,7 @@ import sys
 from typing import Optional
 
 from douyin_pipeline.config import Settings
+from douyin_pipeline.downloader import _detect_ytdlp_js_runtime, _ytdlp_supports_js_runtimes
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ def run_checks(settings: Settings, *, with_asr: bool = True) -> list[CheckResult
         _check_python(),
         _check_command("yt-dlp", settings.ytdlp_cmd, ["--version"]),
         _check_command("ffmpeg", settings.ffmpeg_cmd, ["-version"]),
+        _check_youtube_js_runtime(settings.ytdlp_cmd),
         _check_output_dir(settings.output_dir),
         _check_cookies(settings.cookies_file, settings.cookies_from_browser),
     ]
@@ -89,6 +91,31 @@ def _check_output_dir(output_dir: Path) -> CheckResult:
         return CheckResult(name="output_dir", ok=False, detail=str(exc))
 
     return CheckResult(name="output_dir", ok=True, detail=str(output_dir))
+
+
+def _check_youtube_js_runtime(ytdlp_cmd: tuple[str, ...]) -> CheckResult:
+    runtime = _detect_ytdlp_js_runtime()
+    if not runtime:
+        return CheckResult(
+            name="youtube_js_runtime",
+            ok=False,
+            detail="not found; install node or deno for stable YouTube downloads",
+        )
+
+    if not _ytdlp_supports_js_runtimes(ytdlp_cmd):
+        if runtime == "deno" or runtime.startswith("deno:"):
+            return CheckResult(
+                name="youtube_js_runtime",
+                ok=True,
+                detail=f"{runtime} (compat mode for older yt-dlp)",
+            )
+        return CheckResult(
+            name="youtube_js_runtime",
+            ok=False,
+            detail="runtime found, but yt-dlp is too old for node-based YouTube support; install deno or upgrade yt-dlp",
+        )
+
+    return CheckResult(name="youtube_js_runtime", ok=True, detail=runtime)
 
 
 def _check_cookies(

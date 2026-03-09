@@ -2,6 +2,37 @@
 
 本项目使用中文维护版本迭代记录，按功能新增、修复、优化归档。
 
+## [0.8.2] - 2026-03-09
+
+### 功能新增
+
+- `doctor` 现在不仅检查 YouTube JS runtime，还会确认当前 `yt-dlp` 是否支持 `--js-runtimes`，避免旧版依赖被误判为可用。
+
+### 修复
+
+- 修复旧版 `yt-dlp` 不支持 `--js-runtimes` 时，YouTube 下载器直接报参数错误的问题；现在检测到 Deno 时会自动切到兼容模式。
+- 修复 Python 3.9 环境无法安装新版 `yt-dlp` 的约束冲突，继续保持远端部署可用。
+- 修复 macOS 部署优先命中虚拟环境旧版 `yt-dlp` 的问题，配置现在会优先发现官方独立二进制。
+
+### 优化
+
+- 补充旧版 `yt-dlp`、PATH 外 Deno、`doctor` 检查等 YouTube 回归测试。
+
+## [0.8.1] - 2026-03-09
+
+### 功能新增
+
+- `doctor` 新增 `youtube_js_runtime` 检查项，明确提示当前环境是否具备 YouTube 稳定下载所需的 JS runtime。
+
+### 修复
+
+- 修复 YouTube 在部分 macOS 环境中因 `node` / `deno` 不在 PATH 而无法被 `yt-dlp` 发现的问题，下载器现在会补查常见安装路径并显式传递给 `--js-runtimes`。
+- 修复远端服务 `doctor` 全绿但 YouTube 仍会失败的假阳性问题。
+
+### 优化
+
+- 补充 YouTube JS runtime 探测与 `doctor` 的回归测试，覆盖 PATH 外安装的 Deno 场景。
+
 ## [0.8.0] - 2026-03-09
 
 ### 功能新增

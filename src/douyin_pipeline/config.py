@@ -52,6 +52,10 @@ def load_settings(
 
 
 def _discover_ytdlp_command() -> str:
+    for candidate in _ytdlp_candidates():
+        if candidate.exists():
+            return str(candidate)
+
     discovered = shutil.which("yt-dlp")
     if discovered:
         return discovered
@@ -64,6 +68,15 @@ def _discover_ytdlp_command() -> str:
         return f'"{sys.executable}" -m yt_dlp'
 
     return "yt-dlp"
+
+
+def _ytdlp_candidates() -> list[Path]:
+    home = Path.home()
+    return [
+        home / ".local/bin/yt-dlp",
+        Path("/usr/local/bin/yt-dlp"),
+        Path("/opt/homebrew/bin/yt-dlp"),
+    ]
 
 
 def _discover_ffmpeg_command() -> str:
