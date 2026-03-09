@@ -44,6 +44,15 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             technical_detail=detail,
         )
 
+    if "kuaishou share is not a video" in lowered:
+        return _error(
+            code="kuaishou_non_video",
+            kind="input",
+            message="这条快手分享不是视频内容，当前不能进入转写链路。",
+            hint="请改用快手视频分享链接；如果后面要支持图集下载，可以单独再加。",
+            technical_detail=detail,
+        )
+
     if "could not copy chrome cookie database" in lowered or (
         "cookie database" in lowered and "copy" in lowered
     ):
@@ -69,7 +78,7 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="download_failed",
             kind="download",
             message="视频下载失败。",
-            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 等分离流视频需要 ffmpeg，小红书触发验证时也会导致下载失败。",
+            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 等分离流视频需要 ffmpeg，小红书触发验证或快手页面结构变化时也会导致下载失败。",
             technical_detail=detail,
         )
 
@@ -88,6 +97,24 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             kind="download",
             message="小红书页面里没有解析到可播放的视频地址。",
             hint="确认这是一条视频笔记而不是图文笔记，并检查分享链接是否仍然有效。",
+            technical_detail=detail,
+        )
+
+    if "kuaishou page did not expose init_state" in lowered or "kuaishou page did not expose a share payload" in lowered:
+        return _error(
+            code="kuaishou_payload_missing",
+            kind="download",
+            message="快手页面里没有解析到可用的分享数据。",
+            hint="这通常是页面结构变化或站点限制导致，可以稍后重试，或者换一条公开可访问的快手视频链接验证。",
+            technical_detail=detail,
+        )
+
+    if "kuaishou page did not expose a playable video url" in lowered:
+        return _error(
+            code="kuaishou_video_url_missing",
+            kind="download",
+            message="快手页面里没有解析到可播放的视频地址。",
+            hint="确认这条分享仍然可播放，并且确实是视频而不是图集或其他内容。",
             technical_detail=detail,
         )
 

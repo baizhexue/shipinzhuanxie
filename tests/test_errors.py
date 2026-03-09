@@ -49,6 +49,20 @@ class ErrorClassificationTests(unittest.TestCase):
         self.assertEqual(actual.code, "xiaohongshu_video_url_missing")
         self.assertEqual(actual.kind, "download")
 
+    def test_classifies_kuaishou_non_video(self) -> None:
+        actual = classify_exception(
+            RuntimeError("Kuaishou share is not a video. photoType=PHOTO")
+        )
+        self.assertEqual(actual.code, "kuaishou_non_video")
+        self.assertEqual(actual.kind, "input")
+
+    def test_classifies_kuaishou_video_url_missing(self) -> None:
+        actual = classify_exception(
+            RuntimeError("Kuaishou page did not expose a playable video URL.")
+        )
+        self.assertEqual(actual.code, "kuaishou_video_url_missing")
+        self.assertEqual(actual.kind, "download")
+
 
 if __name__ == "__main__":
     unittest.main()

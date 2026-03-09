@@ -64,6 +64,10 @@ def download_video(
             from douyin_pipeline.xiaohongshu_page import download_with_page
 
             return download_with_page(source_url, job_dir)
+        if _should_use_kuaishou_page_fallback(platform, exc):
+            from douyin_pipeline.kuaishou_page import download_with_page
+
+            return download_with_page(source_url, job_dir)
         raise
 
 
@@ -134,14 +138,11 @@ def _should_use_douyin_browser_fallback(source_url: str, error: RuntimeError) ->
 
 
 def _should_use_xiaohongshu_page_fallback(platform: str, error: RuntimeError) -> bool:
-    if platform != "xiaohongshu":
-        return False
+    return platform == "xiaohongshu"
 
-    text = str(error).lower()
-    return not (
-        "adaptive streams were downloaded but not merged" in text
-        or "ffmpeg" in text
-    )
+
+def _should_use_kuaishou_page_fallback(platform: str, error: RuntimeError) -> bool:
+    return platform == "kuaishou"
 
 
 def _extract_title(stdout: str) -> str:

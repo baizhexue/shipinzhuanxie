@@ -16,6 +16,9 @@ class ParserTests(unittest.TestCase):
     def test_detect_source_platform_recognizes_xiaohongshu_short_link(self) -> None:
         self.assertEqual(detect_source_platform("http://xhslink.com/o/3gjd39CJOsa"), "xiaohongshu")
 
+    def test_detect_source_platform_recognizes_kuaishou_short_link(self) -> None:
+        self.assertEqual(detect_source_platform("https://v.kuaishou.com/Jw81AFy5"), "kuaishou")
+
 
 if __name__ == "__main__":
     unittest.main()

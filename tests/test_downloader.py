@@ -85,6 +85,36 @@ class DownloaderTests(unittest.TestCase):
         self.assertEqual(actual.title, 'demo')
         fallback.assert_called_once()
 
+    def test_download_video_falls_back_to_kuaishou_page_when_ytdlp_fails(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            job_dir = root / 'job-1'
+            job_dir.mkdir()
+            settings = Settings(
+                output_dir=root,
+                cookies_file=None,
+                cookies_from_browser=None,
+                ffmpeg_cmd=('ffmpeg',),
+                ytdlp_cmd=('yt-dlp',),
+                whisper_model='small',
+                whisper_device='cpu',
+            )
+            expected = SimpleNamespace(
+                source_url='https://v.m.chenzhongtech.com/fw/photo/demo',
+                title='demo',
+                video_path=job_dir / 'demo.mp4',
+                job_dir=job_dir,
+            )
+
+            with patch('douyin_pipeline.downloader._download_with_ytdlp', side_effect=RuntimeError('Video download failed.')), patch(
+                'douyin_pipeline.kuaishou_page.download_with_page',
+                return_value=expected,
+            ) as fallback:
+                actual = download_video('https://v.kuaishou.com/Jw81AFy5', settings, job_dir=job_dir)
+
+        self.assertEqual(actual.title, 'demo')
+        fallback.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

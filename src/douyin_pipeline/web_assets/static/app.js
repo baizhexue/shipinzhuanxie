@@ -104,6 +104,7 @@ function formatPlatform(platform, sourceUrl = "") {
       douyin: "抖音",
       bilibili: "Bilibili",
       xiaohongshu: "小红书",
+      kuaishou: "快手",
       unknown: "未知来源",
     }[normalized] || normalized || "未知来源"
   );
@@ -114,6 +115,7 @@ function inferPlatformFromUrl(sourceUrl) {
   if (value.includes("douyin.com")) return "douyin";
   if (value.includes("bilibili.com") || value.includes("b23.tv")) return "bilibili";
   if (value.includes("xiaohongshu.com") || value.includes("xhslink.com")) return "xiaohongshu";
+  if (value.includes("kuaishou.com") || value.includes("chenzhongtech.com")) return "kuaishou";
   return "unknown";
 }
 

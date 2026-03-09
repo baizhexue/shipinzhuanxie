@@ -10,6 +10,7 @@ PLATFORM_HOSTS = {
     "douyin": ("douyin.com", "iesdouyin.com"),
     "bilibili": ("bilibili.com", "b23.tv"),
     "xiaohongshu": ("xiaohongshu.com", "xhslink.com"),
+    "kuaishou": ("kuaishou.com", "chenzhongtech.com"),
 }
 
 
