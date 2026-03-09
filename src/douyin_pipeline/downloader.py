@@ -9,6 +9,7 @@ import subprocess
 from typing import Optional
 
 from douyin_pipeline.config import Settings
+from douyin_pipeline.parser import detect_source_platform
 
 
 MEDIA_SUFFIXES = {
@@ -54,10 +55,15 @@ def download_video(
     try:
         return _download_with_ytdlp(source_url, settings, job_dir)
     except RuntimeError as exc:
-        if _should_use_browser_fallback(source_url, exc):
+        platform = detect_source_platform(source_url)
+        if _should_use_douyin_browser_fallback(source_url, exc):
             from douyin_pipeline.douyin_browser import download_with_browser
 
             return download_with_browser(source_url, job_dir)
+        if _should_use_xiaohongshu_page_fallback(platform, exc):
+            from douyin_pipeline.xiaohongshu_page import download_with_page
+
+            return download_with_page(source_url, job_dir)
         raise
 
 
@@ -71,7 +77,6 @@ def _download_with_ytdlp(
     command = [
         *settings.ytdlp_cmd,
         "--no-playlist",
-        "--restrict-filenames",
         "--retries",
         "2",
         "--fragment-retries",
@@ -97,6 +102,8 @@ def _download_with_ytdlp(
         command,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
@@ -118,11 +125,22 @@ def _download_with_ytdlp(
     )
 
 
-def _should_use_browser_fallback(source_url: str, error: RuntimeError) -> bool:
+def _should_use_douyin_browser_fallback(source_url: str, error: RuntimeError) -> bool:
     text = str(error)
     return (
         "douyin.com" in source_url
         and "Fresh cookies" in text
+    )
+
+
+def _should_use_xiaohongshu_page_fallback(platform: str, error: RuntimeError) -> bool:
+    if platform != "xiaohongshu":
+        return False
+
+    text = str(error).lower()
+    return not (
+        "adaptive streams were downloaded but not merged" in text
+        or "ffmpeg" in text
     )
 
 

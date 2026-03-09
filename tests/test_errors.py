@@ -35,6 +35,20 @@ class ErrorClassificationTests(unittest.TestCase):
         self.assertEqual(actual.kind, "dependency")
         self.assertIn("ffmpeg", actual.hint)
 
+    def test_classifies_xiaohongshu_verification(self) -> None:
+        actual = classify_exception(
+            RuntimeError("Xiaohongshu page requires verification before the video can be accessed.")
+        )
+        self.assertEqual(actual.code, "xiaohongshu_verification_required")
+        self.assertEqual(actual.kind, "auth")
+
+    def test_classifies_xiaohongshu_video_url_missing(self) -> None:
+        actual = classify_exception(
+            RuntimeError("Xiaohongshu page did not expose a playable video URL.")
+        )
+        self.assertEqual(actual.code, "xiaohongshu_video_url_missing")
+        self.assertEqual(actual.kind, "download")
+
 
 if __name__ == "__main__":
     unittest.main()

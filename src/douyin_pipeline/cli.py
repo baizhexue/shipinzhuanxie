@@ -13,7 +13,7 @@ from douyin_pipeline.transcriber import transcribe_video
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="douyin-pipeline",
-        description="Download a Douyin or Bilibili video and transcribe it into text.",
+        description="Download a Douyin, Bilibili, or Xiaohongshu video and transcribe it into text.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_shared_download_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("raw_input", help="Douyin/Bilibili share text or URL")
+    parser.add_argument("raw_input", help="Douyin/Bilibili/Xiaohongshu share text or URL")
     _add_runtime_args(parser)
 
 

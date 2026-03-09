@@ -22,7 +22,7 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="invalid_input",
             kind="input",
             message="没有识别到可用链接。",
-            hint="请粘贴完整分享文案，或者直接粘贴抖音 URL。",
+            hint="请粘贴完整分享文案，或者直接粘贴抖音、Bilibili、小红书的视频链接。",
             technical_detail=detail,
         )
 
@@ -30,8 +30,17 @@ def classify_exception(exc: BaseException) -> UserFacingError:
         return _error(
             code="douyin_fresh_cookies",
             kind="auth",
-            message="抖音要求更新的浏览器 cookies 才能访问这个视频。",
+            message="抖音要求更新后的浏览器 cookies 才能访问这条视频。",
             hint="先在浏览器里打开这条视频并确认能播放，再重试。也可以改用浏览器 cookies 或 cookies.txt。",
+            technical_detail=detail,
+        )
+
+    if "xiaohongshu page requires verification" in lowered:
+        return _error(
+            code="xiaohongshu_verification_required",
+            kind="auth",
+            message="小红书当前要求先完成访问验证，暂时不能直接下载这条视频。",
+            hint="先在浏览器里打开这条小红书笔记并确认能正常播放，再回到工具里重试；如果持续触发验证，建议稍后再试。",
             technical_detail=detail,
         )
 
@@ -60,7 +69,7 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="download_failed",
             kind="download",
             message="视频下载失败。",
-            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 等分离流视频则需要 ffmpeg 可用。",
+            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 等分离流视频需要 ffmpeg，小红书触发验证时也会导致下载失败。",
             technical_detail=detail,
         )
 
@@ -70,6 +79,15 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             kind="dependency",
             message="下载到了分离的视频流和音频流，但还没有合并成可播放文件。",
             hint="请确认 ffmpeg 可用，并且 yt-dlp 能访问到 ffmpeg；这类 Bilibili 视频通常需要合并后才能继续转写。",
+            technical_detail=detail,
+        )
+
+    if "xiaohongshu page did not expose a playable video url" in lowered:
+        return _error(
+            code="xiaohongshu_video_url_missing",
+            kind="download",
+            message="小红书页面里没有解析到可播放的视频地址。",
+            hint="确认这是一条视频笔记而不是图文笔记，并检查分享链接是否仍然有效。",
             technical_detail=detail,
         )
 

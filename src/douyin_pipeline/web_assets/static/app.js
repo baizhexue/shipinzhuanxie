@@ -97,6 +97,26 @@ function formatAction(action) {
   return action === "run" ? "下载 + 转文字" : "只下载";
 }
 
+function formatPlatform(platform, sourceUrl = "") {
+  const normalized = platform || inferPlatformFromUrl(sourceUrl);
+  return (
+    {
+      douyin: "抖音",
+      bilibili: "Bilibili",
+      xiaohongshu: "小红书",
+      unknown: "未知来源",
+    }[normalized] || normalized || "未知来源"
+  );
+}
+
+function inferPlatformFromUrl(sourceUrl) {
+  const value = String(sourceUrl || "").toLowerCase();
+  if (value.includes("douyin.com")) return "douyin";
+  if (value.includes("bilibili.com") || value.includes("b23.tv")) return "bilibili";
+  if (value.includes("xiaohongshu.com") || value.includes("xhslink.com")) return "xiaohongshu";
+  return "unknown";
+}
+
 function formatStatus(status) {
   return (
     {
@@ -280,6 +300,7 @@ function buildJobCard(job, { includeDelete = false } = {}) {
         <span class="status-pill ${statusClass(job.status)}">${escapeHtml(formatStatus(job.status))}</span>
       </div>
       <div class="job-meta">
+        <span>${escapeHtml(formatPlatform(job.source_platform, job.source_url))}</span>
         <span>${escapeHtml(formatAction(job.action))}</span>
         <span>${escapeHtml(job.created_at || "-")}</span>
       </div>
@@ -471,6 +492,10 @@ function renderDetail(job) {
       <section class="result-block meta-block">
         <div class="result-tools"><strong>任务信息</strong></div>
         <dl>
+          <div>
+            <dt>来源平台</dt>
+            <dd>${escapeHtml(formatPlatform(job.source_platform, job.source_url))}</dd>
+          </div>
           <div>
             <dt>模式</dt>
             <dd>${escapeHtml(formatAction(job.action))}</dd>

@@ -9,7 +9,7 @@ from douyin_pipeline.config import Settings
 from douyin_pipeline.downloader import DownloadResult, create_job_dir, download_video
 from douyin_pipeline.errors import UserFacingError, classify_exception
 from douyin_pipeline.jobs import read_manifest, relative_to, write_manifest
-from douyin_pipeline.parser import extract_share_url
+from douyin_pipeline.parser import detect_source_platform, extract_share_url
 from douyin_pipeline.transcriber import TranscriptResult, transcribe_video
 
 
@@ -343,6 +343,7 @@ def _build_manifest(
         "detail": detail,
         "raw_input": prepared_job.raw_input,
         "source_url": prepared_job.source_url,
+        "source_platform": detect_source_platform(prepared_job.source_url),
         "title": download_result.title if download_result else None,
         "video_path": relative_to(settings.output_dir, video_path),
         "audio_path": relative_to(settings.output_dir, audio_path),
