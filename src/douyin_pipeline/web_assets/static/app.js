@@ -310,6 +310,7 @@ function buildJobCard(job, { includeDelete = false } = {}) {
       </div>
       <div class="job-path">${escapeHtml(job.source_url || job.job_id)}</div>
       <div class="doctor-detail">${escapeHtml(job.detail || "")}</div>
+      ${buildStatusNote(job, true)}
       ${buildProgress(job, true)}
       ${buildJobActions(job, { includeDelete })}
     </article>
@@ -397,6 +398,11 @@ function buildErrorHint(job) {
   }
 
   return "";
+}
+
+function buildStatusNote(job, compact = false) {
+  if (!job?.status_note) return "";
+  return `<p class="status-note${compact ? " compact" : ""}">${escapeHtml(job.status_note)}</p>`;
 }
 
 function buildDetailActions(job) {
@@ -521,10 +527,15 @@ function renderDetail(job) {
             <dd>${escapeHtml(job.detail || "-")}</dd>
           </div>
           <div>
+            <dt>状态提示</dt>
+            <dd>${escapeHtml(job.status_note || "-")}</dd>
+          </div>
+          <div>
             <dt>阶段</dt>
             <dd>${escapeHtml(formatPhase(job.phase, job.status))}</dd>
           </div>
         </dl>
+        ${buildStatusNote(job)}
         ${buildProgress(job)}
         ${buildDetailActions(job)}
       </section>

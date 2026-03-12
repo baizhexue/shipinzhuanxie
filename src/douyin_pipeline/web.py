@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Thread
 from typing import Any, Optional
+import time
 
 try:
     from fastapi import Request
@@ -21,6 +22,7 @@ from douyin_pipeline.jobs import (
     list_job_manifests,
     read_manifest,
     read_transcript_text,
+    sweep_stale_jobs,
     to_public_job,
     write_manifest,
 )
@@ -42,6 +44,7 @@ from douyin_pipeline.telegram_manager import TelegramManager
 ASSET_DIR = Path(__file__).with_name("web_assets")
 STATIC_DIR = ASSET_DIR / "static"
 INDEX_FILE = ASSET_DIR / "index.html"
+STALE_SWEEP_INTERVAL_SECONDS = 30.0
 
 
 def create_app(settings: Optional[Settings] = None):
@@ -58,8 +61,10 @@ def create_app(settings: Optional[Settings] = None):
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        sweep_stale_jobs(resolved_settings.output_dir)
         manager = TelegramManager(resolved_settings)
         app.state.telegram_manager = manager
+        app.state.last_stale_sweep_monotonic = time.monotonic()
         manager.ensure_started_from_saved()
         try:
             yield
@@ -98,6 +103,7 @@ def create_app(settings: Optional[Settings] = None):
         action: Optional[str] = None,
         active_only: bool = False,
     ) -> dict[str, Any]:
+        await _maybe_sweep_stale_jobs(app, run_in_threadpool)
         safe_limit = max(1, min(limit, 50))
         payload = await run_in_threadpool(
             lambda: list_job_manifests(
@@ -122,6 +128,7 @@ def create_app(settings: Optional[Settings] = None):
 
     @app.get("/api/jobs/{job_id}")
     async def job(job_id: str) -> dict[str, Any]:
+        await _maybe_sweep_stale_jobs(app, run_in_threadpool)
         manifest = await run_in_threadpool(
             read_manifest,
             app.state.settings.output_dir / job_id,
@@ -132,6 +139,7 @@ def create_app(settings: Optional[Settings] = None):
 
     @app.get("/api/jobs/{job_id}/transcript")
     async def job_transcript(job_id: str) -> dict[str, Any]:
+        await _maybe_sweep_stale_jobs(app, run_in_threadpool)
         manifest = await run_in_threadpool(
             read_manifest,
             app.state.settings.output_dir / job_id,
@@ -329,6 +337,7 @@ def create_app(settings: Optional[Settings] = None):
 
     @app.delete("/api/jobs/{job_id}")
     async def remove_job(job_id: str):
+        await _maybe_sweep_stale_jobs(app, run_in_threadpool)
         try:
             deleted = await run_in_threadpool(delete_job, app.state.settings.output_dir, job_id)
         except ValueError as exc:
@@ -547,3 +556,13 @@ def _openclaw_auth_error(response_class, request, settings: Settings):
             hint="检查 X-OpenClaw-Token 或 OPENCLAW_SHARED_TOKEN 配置。",
         )
     return None
+
+
+async def _maybe_sweep_stale_jobs(app, run_in_threadpool, *, force: bool = False) -> None:
+    last_sweep = float(getattr(app.state, "last_stale_sweep_monotonic", 0.0) or 0.0)
+    now = time.monotonic()
+    if not force and (now - last_sweep) < STALE_SWEEP_INTERVAL_SECONDS:
+        return
+
+    await run_in_threadpool(sweep_stale_jobs, app.state.settings.output_dir)
+    app.state.last_stale_sweep_monotonic = now

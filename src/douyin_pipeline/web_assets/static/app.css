@@ -243,6 +243,7 @@ button:disabled {
 .doctor-detail,
 .job-meta,
 .job-path,
+.status-note,
 .result-copy,
 .error-text,
 .empty-inline,
@@ -556,6 +557,19 @@ input[type="text"]:focus {
 
 .job-path {
   word-break: break-all;
+}
+
+.status-note {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid rgba(40, 87, 123, 0.32);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: rgba(40, 87, 123, 0.08);
+}
+
+.status-note.compact {
+  margin-top: 12px;
+  font-size: 0.92rem;
 }
 
 .status-pill {

@@ -1,8 +1,10 @@
 ﻿from __future__ import annotations
 
 from dataclasses import replace
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -10,7 +12,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from douyin_pipeline.config import Settings
-from douyin_pipeline.jobs import read_manifest, write_manifest
+from douyin_pipeline.jobs import STALE_TIMEOUT_SECONDS, read_manifest, write_manifest
 from douyin_pipeline.web import create_app
 
 
@@ -209,6 +211,52 @@ class WebApiTests(unittest.TestCase):
         self.assertTrue(payload["has_more"])
         self.assertEqual(payload["summary"]["total"], 2)
         self.assertEqual(payload["summary"]["error"], 1)
+
+    def test_jobs_endpoint_marks_stale_active_job_as_error(self) -> None:
+        with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:
+            job_dir = Path(tmp_dir) / "job-stale"
+            job_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = write_manifest(
+                job_dir,
+                {
+                    "job_id": "job-stale",
+                    "job_dir": "job-stale",
+                    "created_at": "2026-03-12T14:50:25",
+                    "action": "run",
+                    "status": "downloading",
+                    "detail": "Downloading...",
+                    "raw_input": "https://v.douyin.com/demo/",
+                    "source_url": "https://v.douyin.com/demo/",
+                    "source_platform": "douyin",
+                    "title": "demo",
+                    "video_path": None,
+                    "audio_path": None,
+                    "transcript_path": None,
+                    "transcript_preview": None,
+                    "error": None,
+                    "error_code": None,
+                    "error_kind": None,
+                    "error_hint": None,
+                    "technical_error": None,
+                    "phase": "downloading",
+                    "progress_percent": 8.0,
+                    "eta_seconds": None,
+                    "processed_seconds": 0.0,
+                    "duration_seconds": None,
+                },
+            )
+            expired_at = time.time() - STALE_TIMEOUT_SECONDS["downloading"] - 30
+            os.utime(manifest_path, (expired_at, expired_at))
+            client.app.state.last_stale_sweep_monotonic = 0.0
+
+            response = client.get("/api/jobs")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["jobs"][0]["job_id"], "job-stale")
+        self.assertEqual(payload["jobs"][0]["status"], "error")
+        self.assertEqual(payload["jobs"][0]["error_code"], "stale_job_timeout")
+        self.assertTrue(payload["jobs"][0]["status_note"])
 
     def test_delete_job_removes_completed_history_item(self) -> None:
         with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:

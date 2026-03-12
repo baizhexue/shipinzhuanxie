@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Optional
 import json
 import shutil
+import time
+from pathlib import Path
+from typing import Any, Optional
 
 
 MANIFEST_NAME = "manifest.json"
 ACTIVE_STATUSES = {"queued", "downloading", "transcribing", "running"}
+STALE_TIMEOUT_SECONDS = {
+    "queued": 180,
+    "downloading": 480,
+    "running": 1800,
+    "transcribing": 1800,
+}
 
 
 def write_manifest(job_dir: Path, payload: dict[str, Any]) -> Path:
@@ -117,6 +124,7 @@ def to_public_job(manifest: dict[str, Any]) -> dict[str, Any]:
         and payload.get("status") not in ACTIVE_STATUSES
     )
     payload["can_delete"] = payload.get("status") not in ACTIVE_STATUSES
+    payload["status_note"] = _build_status_note(payload)
     return payload
 
 
@@ -130,6 +138,57 @@ def read_transcript_text(output_dir: Path, manifest: dict[str, Any]) -> Optional
         return None
 
     return transcript_path.read_text(encoding="utf-8")
+
+
+def sweep_stale_jobs(output_dir: Path) -> int:
+    if not output_dir.exists():
+        return 0
+
+    updated_count = 0
+    now = time.time()
+
+    for job_dir in output_dir.iterdir():
+        if not job_dir.is_dir() or not job_dir.name.startswith("job-"):
+            continue
+
+        manifest_path = job_dir / MANIFEST_NAME
+        if not manifest_path.exists():
+            continue
+
+        manifest = read_manifest(job_dir)
+        if manifest is None:
+            continue
+
+        status = str(manifest.get("status") or "")
+        timeout_seconds = STALE_TIMEOUT_SECONDS.get(status)
+        if timeout_seconds is None:
+            continue
+
+        age_seconds = now - manifest_path.stat().st_mtime
+        if age_seconds < timeout_seconds:
+            continue
+
+        manifest.update(
+            {
+                "status": "error",
+                "phase": "failed",
+                "detail": "任务长时间无进展，系统已自动终止。",
+                "error": "任务长时间无进展，系统已自动终止。",
+                "error_code": "stale_job_timeout",
+                "error_kind": "runtime",
+                "error_hint": "可以直接重试；如果是抖音下载，系统会在超时后自动回退浏览器解析。",
+                "technical_error": (
+                    f"Job stayed in `{status}` for {int(age_seconds)} seconds "
+                    "without manifest updates."
+                ),
+                "progress_percent": None,
+                "eta_seconds": None,
+            }
+        )
+        write_manifest(job_dir, manifest)
+        updated_count += 1
+
+    return updated_count
 
 
 def _all_manifests(output_dir: Path) -> list[dict[str, Any]]:
@@ -196,3 +255,21 @@ def _build_summary(manifests: list[dict[str, Any]]) -> dict[str, int]:
         ),
         "with_transcript": sum(1 for item in manifests if item.get("transcript_path")),
     }
+
+
+def _build_status_note(manifest: dict[str, Any]) -> Optional[str]:
+    error_code = str(manifest.get("error_code") or "")
+    status = str(manifest.get("status") or "")
+    platform = str(manifest.get("source_platform") or "")
+
+    if error_code == "download_timeout":
+        return "下载器长时间无响应，任务已自动停止。重新发起后会再次尝试，并对抖音触发浏览器回退。"
+    if error_code == "stale_job_timeout":
+        return "任务长时间没有进展，系统已自动标记失败，避免一直挂在历史记录里。"
+    if status == "queued":
+        return "任务已进入后台队列，通常会在几秒内开始处理。"
+    if status == "downloading" and platform == "douyin":
+        return "抖音会先尝试 yt-dlp；如果长时间无响应，会自动切到浏览器回退下载。"
+    if status == "transcribing":
+        return "转写阶段会持续刷新进度，首次加载模型时会比普通阶段更慢。"
+    return None
