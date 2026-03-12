@@ -73,6 +73,15 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             technical_detail=detail,
         )
 
+    if detail.startswith("Video download failed.") and "timed out after" in lowered:
+        return _error(
+            code="download_timeout",
+            kind="download",
+            message="视频下载超时。",
+            hint="站点响应过慢或下载器卡住了。抖音链接会自动尝试浏览器回退；如果仍失败，请稍后重试。",
+            technical_detail=detail,
+        )
+
     if detail.startswith("Video download failed."):
         return _error(
             code="download_failed",

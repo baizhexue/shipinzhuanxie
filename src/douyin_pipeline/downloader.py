@@ -12,6 +12,7 @@ from typing import Optional
 
 from douyin_pipeline.config import Settings
 from douyin_pipeline.parser import detect_source_platform
+from douyin_pipeline.subprocess_utils import run_command
 
 
 MEDIA_SUFFIXES = {
@@ -30,6 +31,8 @@ AUDIO_SUFFIXES = {
     ".flac",
 }
 ADAPTIVE_STREAM_PATTERN = re.compile(r"\.f\d+$")
+YTDLP_DOWNLOAD_TIMEOUT_SECONDS = 180
+YTDLP_HELP_TIMEOUT_SECONDS = 8
 
 
 @dataclass(frozen=True)
@@ -115,15 +118,18 @@ def _download_with_ytdlp(
     elif settings.cookies_file:
         command.extend(["--cookies", str(settings.cookies_file)])
 
-    completed = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        env=process_env,
-    )
+    try:
+        completed = run_command(
+            command,
+            timeout=YTDLP_DOWNLOAD_TIMEOUT_SECONDS,
+            env=process_env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "Video download failed.\n"
+            f"command: {' '.join(command)}\n"
+            f"stderr: yt-dlp timed out after {YTDLP_DOWNLOAD_TIMEOUT_SECONDS} seconds"
+        ) from exc
 
     if completed.returncode != 0:
         raise RuntimeError(
@@ -144,10 +150,10 @@ def _download_with_ytdlp(
 
 
 def _should_use_douyin_browser_fallback(source_url: str, error: RuntimeError) -> bool:
-    text = str(error)
+    text = str(error).lower()
     return (
         "douyin.com" in source_url
-        and "Fresh cookies" in text
+        and ("fresh cookies" in text or "timed out after" in text)
     )
 
 
@@ -270,16 +276,11 @@ def _find_common_js_runtime_path(name: str) -> Optional[str]:
 
 def _ytdlp_supports_js_runtimes(command: tuple[str, ...]) -> bool:
     try:
-        completed = subprocess.run(
+        completed = run_command(
             [*command, "--help"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=20,
+            timeout=YTDLP_HELP_TIMEOUT_SECONDS,
         )
-    except (FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return False
 
     help_text = "\n".join(part for part in (completed.stdout, completed.stderr) if part)

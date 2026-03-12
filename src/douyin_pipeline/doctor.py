@@ -9,6 +9,9 @@ from typing import Optional
 
 from douyin_pipeline.config import Settings
 from douyin_pipeline.downloader import _detect_ytdlp_js_runtime, _ytdlp_supports_js_runtimes
+from douyin_pipeline.subprocess_utils import run_command
+
+COMMAND_CHECK_TIMEOUT_SECONDS = 8
 
 
 @dataclass(frozen=True)
@@ -58,20 +61,21 @@ def _check_python() -> CheckResult:
 
 def _check_command(name: str, command: tuple[str, ...], version_args: list[str]) -> CheckResult:
     try:
-        completed = subprocess.run(
+        completed = run_command(
             [*command, *version_args],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=20,
+            timeout=COMMAND_CHECK_TIMEOUT_SECONDS,
         )
     except FileNotFoundError:
         return CheckResult(
             name=name,
             ok=False,
             detail=f"command not found: {' '.join(command)}",
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            name=name,
+            ok=False,
+            detail=f"command timed out: {' '.join(command)}",
         )
     except OSError as exc:
         return CheckResult(name=name, ok=False, detail=str(exc))

@@ -29,7 +29,7 @@ class DownloaderTests(unittest.TestCase):
                 openclaw_token=None,
             )
 
-            def fake_run(command, capture_output, text, encoding, errors, check, env=None):
+            def fake_run(command, timeout=None, env=None, cwd=None):
                 self.assertIn('--merge-output-format', command)
                 self.assertIn('mp4', command)
                 self.assertIn('--ffmpeg-location', command)
@@ -38,7 +38,7 @@ class DownloaderTests(unittest.TestCase):
                 (job_dir / 'demo.mp4').write_bytes(b'video')
                 return SimpleNamespace(returncode=0, stdout='{"title": "demo"}\n', stderr='')
 
-            with patch('douyin_pipeline.downloader.subprocess.run', side_effect=fake_run):
+            with patch('douyin_pipeline.downloader.run_command', side_effect=fake_run):
                 result = _download_with_ytdlp('https://www.bilibili.com/video/BV1demo', settings, job_dir)
 
             self.assertEqual(result.title, 'demo')
@@ -63,7 +63,7 @@ class DownloaderTests(unittest.TestCase):
                 openclaw_token=None,
             )
 
-            def fake_run(command, capture_output, text, encoding, errors, check, env=None):
+            def fake_run(command, timeout=None, env=None, cwd=None):
                 self.assertIn('--js-runtimes', command)
                 runtime_index = command.index('--js-runtimes')
                 self.assertEqual(command[runtime_index + 1], 'node')
@@ -74,7 +74,7 @@ class DownloaderTests(unittest.TestCase):
                 'douyin_pipeline.downloader._ytdlp_supports_js_runtimes',
                 return_value=True,
             ), patch(
-                'douyin_pipeline.downloader.subprocess.run',
+                'douyin_pipeline.downloader.run_command',
                 side_effect=fake_run,
             ):
                 result = _download_with_ytdlp('https://www.youtube.com/watch?v=Sdf8fc9b0mI', settings, job_dir)
@@ -104,7 +104,7 @@ class DownloaderTests(unittest.TestCase):
                 openclaw_token=None,
             )
 
-            def fake_run(command, capture_output, text, encoding, errors, check, env=None):
+            def fake_run(command, timeout=None, env=None, cwd=None):
                 self.assertIn('--js-runtimes', command)
                 runtime_index = command.index('--js-runtimes')
                 self.assertEqual(command[runtime_index + 1], f'deno:{deno_bin}')
@@ -118,7 +118,7 @@ class DownloaderTests(unittest.TestCase):
                 'douyin_pipeline.downloader._ytdlp_supports_js_runtimes',
                 return_value=True,
             ), patch(
-                'douyin_pipeline.downloader.subprocess.run',
+                'douyin_pipeline.downloader.run_command',
                 side_effect=fake_run,
             ):
                 result = _download_with_ytdlp('https://www.youtube.com/watch?v=Sdf8fc9b0mI', settings, job_dir)
@@ -144,7 +144,7 @@ class DownloaderTests(unittest.TestCase):
                 openclaw_token=None,
             )
 
-            def fake_run(command, capture_output, text, encoding, errors, check, env=None):
+            def fake_run(command, timeout=None, env=None, cwd=None):
                 self.assertNotIn('--js-runtimes', command)
                 self.assertIsNone(env)
                 (job_dir / 'demo.mp4').write_bytes(b'video')
@@ -154,7 +154,7 @@ class DownloaderTests(unittest.TestCase):
                 'douyin_pipeline.downloader._ytdlp_supports_js_runtimes',
                 return_value=False,
             ), patch(
-                'douyin_pipeline.downloader.subprocess.run',
+                'douyin_pipeline.downloader.run_command',
                 side_effect=fake_run,
             ):
                 result = _download_with_ytdlp('https://www.youtube.com/watch?v=Sdf8fc9b0mI', settings, job_dir)
@@ -183,7 +183,7 @@ class DownloaderTests(unittest.TestCase):
                 openclaw_token=None,
             )
 
-            def fake_run(command, capture_output, text, encoding, errors, check, env=None):
+            def fake_run(command, timeout=None, env=None, cwd=None):
                 self.assertNotIn('--js-runtimes', command)
                 self.assertIsNotNone(env)
                 self.assertIn(str(deno_home), env.get('PATH', ''))
@@ -197,7 +197,7 @@ class DownloaderTests(unittest.TestCase):
                 'douyin_pipeline.downloader._ytdlp_supports_js_runtimes',
                 return_value=False,
             ), patch(
-                'douyin_pipeline.downloader.subprocess.run',
+                'douyin_pipeline.downloader.run_command',
                 side_effect=fake_run,
             ):
                 result = _download_with_ytdlp('https://www.youtube.com/watch?v=Sdf8fc9b0mI', settings, job_dir)
@@ -273,6 +273,40 @@ class DownloaderTests(unittest.TestCase):
                 return_value=expected,
             ) as fallback:
                 actual = download_video('https://v.kuaishou.com/Jw81AFy5', settings, job_dir=job_dir)
+
+        self.assertEqual(actual.title, 'demo')
+        fallback.assert_called_once()
+
+    def test_download_video_falls_back_to_douyin_browser_when_ytdlp_times_out(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            job_dir = root / 'job-1'
+            job_dir.mkdir()
+            settings = Settings(
+                output_dir=root,
+                cookies_file=None,
+                cookies_from_browser=None,
+                ffmpeg_cmd=('ffmpeg',),
+                ytdlp_cmd=('yt-dlp',),
+                whisper_model='small',
+                whisper_device='cpu',
+                openclaw_token=None,
+            )
+            expected = SimpleNamespace(
+                source_url='https://v.douyin.com/demo/',
+                title='demo',
+                video_path=job_dir / 'demo.mp4',
+                job_dir=job_dir,
+            )
+
+            with patch(
+                'douyin_pipeline.downloader._download_with_ytdlp',
+                side_effect=RuntimeError('Video download failed.\nstderr: yt-dlp timed out after 180 seconds'),
+            ), patch(
+                'douyin_pipeline.douyin_browser.download_with_browser',
+                return_value=expected,
+            ) as fallback:
+                actual = download_video('https://v.douyin.com/demo/', settings, job_dir=job_dir)
 
         self.assertEqual(actual.title, 'demo')
         fallback.assert_called_once()
