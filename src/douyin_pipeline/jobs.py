@@ -120,6 +120,18 @@ def to_public_job(manifest: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def read_transcript_text(output_dir: Path, manifest: dict[str, Any]) -> Optional[str]:
+    transcript_rel = manifest.get("transcript_path")
+    if not transcript_rel:
+        return None
+
+    transcript_path = output_dir / str(transcript_rel)
+    if not transcript_path.exists():
+        return None
+
+    return transcript_path.read_text(encoding="utf-8")
+
+
 def _all_manifests(output_dir: Path) -> list[dict[str, Any]]:
     if not output_dir.exists():
         return []

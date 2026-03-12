@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ def _make_settings(output_dir: Path) -> Settings:
         ytdlp_cmd=("yt-dlp",),
         whisper_model="small",
         whisper_device="cpu",
+        openclaw_token=None,
     )
 
 
@@ -332,6 +334,110 @@ class WebApiTests(unittest.TestCase):
         self.assertTrue(payload["config"]["enabled"])
         self.assertTrue(payload["runtime"]["running"])
         self.assertEqual(fake_manager.saved_payloads[0]["enabled"], True)
+
+    def test_job_transcript_endpoint_returns_full_text(self) -> None:
+        with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:
+            job_dir = Path(tmp_dir) / "job-transcript"
+            job_dir.mkdir(parents=True, exist_ok=True)
+            transcript_path = job_dir / "demo.txt"
+            transcript_path.write_text("完整转写文本", encoding="utf-8")
+            write_manifest(
+                job_dir,
+                {
+                    "job_id": "job-transcript",
+                    "job_dir": "job-transcript",
+                    "created_at": "2026-03-12T10:00:00",
+                    "action": "run",
+                    "status": "success",
+                    "detail": "done",
+                    "raw_input": "https://youtu.be/demo",
+                    "source_url": "https://youtu.be/demo",
+                    "source_platform": "youtube",
+                    "title": "demo",
+                    "video_path": None,
+                    "audio_path": None,
+                    "transcript_path": "job-transcript/demo.txt",
+                    "transcript_preview": "完整转写文本",
+                    "error": None,
+                    "error_code": None,
+                    "error_kind": None,
+                    "error_hint": None,
+                    "technical_error": None,
+                    "phase": "completed",
+                    "progress_percent": 100.0,
+                    "eta_seconds": 0.0,
+                    "processed_seconds": 1.0,
+                    "duration_seconds": 1.0,
+                },
+            )
+
+            response = client.get("/api/jobs/job-transcript/transcript")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["transcript_text"], "完整转写文本")
+        self.assertEqual(payload["transcript_char_count"], len("完整转写文本"))
+
+    def test_openclaw_health_requires_token_when_configured(self) -> None:
+        with TemporaryDirectory() as tmp_dir, TestClient(
+            create_app(replace(_make_settings(Path(tmp_dir)), openclaw_token="demo-token"))
+        ) as client:
+            response = client.get("/api/openclaw/health")
+
+        self.assertEqual(response.status_code, 401)
+        payload = response.json()
+        self.assertEqual(payload["error_code"], "openclaw_auth_invalid")
+
+    def test_openclaw_transcribe_returns_full_transcript(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            settings = replace(_make_settings(Path(tmp_dir)), openclaw_token="demo-token")
+            job_dir = settings.output_dir / "job-openclaw"
+            job_dir.mkdir(parents=True, exist_ok=True)
+            transcript_path = job_dir / "demo.txt"
+            transcript_path.write_text("这里是完整稿子", encoding="utf-8")
+
+            manifest = {
+                "job_id": "job-openclaw",
+                "job_dir": "job-openclaw",
+                "created_at": "2026-03-12T10:00:00",
+                "action": "run",
+                "status": "success",
+                "detail": "done",
+                "raw_input": "https://youtu.be/demo",
+                "source_url": "https://youtu.be/demo",
+                "source_platform": "youtube",
+                "title": "demo",
+                "video_path": None,
+                "audio_path": None,
+                "transcript_path": "job-openclaw/demo.txt",
+                "transcript_preview": "这里是完整稿子",
+                "error": None,
+                "error_code": None,
+                "error_kind": None,
+                "error_hint": None,
+                "technical_error": None,
+                "phase": "completed",
+                "progress_percent": 100.0,
+                "eta_seconds": 0.0,
+                "processed_seconds": 1.0,
+                "duration_seconds": 1.0,
+            }
+
+            with patch("douyin_pipeline.web.process_job", return_value=manifest) as mocked_process, TestClient(
+                create_app(settings)
+            ) as client:
+                response = client.post(
+                    "/api/openclaw/transcribe",
+                    headers={"X-OpenClaw-Token": "demo-token"},
+                    json={"raw_input": "https://youtu.be/demo"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["job_id"], "job-openclaw")
+        self.assertEqual(payload["source_platform"], "youtube")
+        self.assertEqual(payload["transcript_text"], "这里是完整稿子")
+        mocked_process.assert_called_once()
 
 
 if __name__ == "__main__":

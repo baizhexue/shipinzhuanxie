@@ -26,6 +26,7 @@ class DownloaderTests(unittest.TestCase):
                 ytdlp_cmd=('yt-dlp',),
                 whisper_model='small',
                 whisper_device='cpu',
+                openclaw_token=None,
             )
 
             def fake_run(command, capture_output, text, encoding, errors, check, env=None):
@@ -59,6 +60,7 @@ class DownloaderTests(unittest.TestCase):
                 ytdlp_cmd=('yt-dlp',),
                 whisper_model='small',
                 whisper_device='cpu',
+                openclaw_token=None,
             )
 
             def fake_run(command, capture_output, text, encoding, errors, check, env=None):
@@ -99,6 +101,7 @@ class DownloaderTests(unittest.TestCase):
                 ytdlp_cmd=('yt-dlp',),
                 whisper_model='small',
                 whisper_device='cpu',
+                openclaw_token=None,
             )
 
             def fake_run(command, capture_output, text, encoding, errors, check, env=None):
@@ -138,6 +141,7 @@ class DownloaderTests(unittest.TestCase):
                 ytdlp_cmd=('yt-dlp',),
                 whisper_model='small',
                 whisper_device='cpu',
+                openclaw_token=None,
             )
 
             def fake_run(command, capture_output, text, encoding, errors, check, env=None):
@@ -176,6 +180,7 @@ class DownloaderTests(unittest.TestCase):
                 ytdlp_cmd=('yt-dlp',),
                 whisper_model='small',
                 whisper_device='cpu',
+                openclaw_token=None,
             )
 
             def fake_run(command, capture_output, text, encoding, errors, check, env=None):
@@ -223,6 +228,7 @@ class DownloaderTests(unittest.TestCase):
                 ytdlp_cmd=('yt-dlp',),
                 whisper_model='small',
                 whisper_device='cpu',
+                openclaw_token=None,
             )
             expected = SimpleNamespace(
                 source_url='https://www.xiaohongshu.com/discovery/item/demo',
@@ -253,6 +259,7 @@ class DownloaderTests(unittest.TestCase):
                 ytdlp_cmd=('yt-dlp',),
                 whisper_model='small',
                 whisper_device='cpu',
+                openclaw_token=None,
             )
             expected = SimpleNamespace(
                 source_url='https://v.m.chenzhongtech.com/fw/photo/demo',

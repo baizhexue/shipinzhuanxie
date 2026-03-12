@@ -6,6 +6,11 @@ from pathlib import Path
 from threading import Thread
 from typing import Any, Optional
 
+try:
+    from fastapi import Request
+except ImportError:  # pragma: no cover - runtime dependency is optional for CLI-only use
+    Request = Any
+
 from douyin_pipeline import __version__
 from douyin_pipeline.config import Settings, load_settings
 from douyin_pipeline.doctor import has_failures, run_checks
@@ -15,10 +20,22 @@ from douyin_pipeline.jobs import (
     delete_job,
     list_job_manifests,
     read_manifest,
+    read_transcript_text,
     to_public_job,
     write_manifest,
 )
-from douyin_pipeline.pipeline import prepare_job, run_prepared_job, transcribe_existing_job
+from douyin_pipeline.openclaw_api import (
+    OPENCLAW_TOKEN_HEADER,
+    build_openclaw_health_payload,
+    build_openclaw_transcript_payload,
+    validate_openclaw_token,
+)
+from douyin_pipeline.pipeline import (
+    prepare_job,
+    process_job,
+    run_prepared_job,
+    transcribe_existing_job,
+)
 from douyin_pipeline.telegram_manager import TelegramManager
 
 
@@ -112,6 +129,40 @@ def create_app(settings: Optional[Settings] = None):
         if manifest is None:
             raise HTTPException(status_code=404, detail="Job not found.")
         return to_public_job(manifest)
+
+    @app.get("/api/jobs/{job_id}/transcript")
+    async def job_transcript(job_id: str) -> dict[str, Any]:
+        manifest = await run_in_threadpool(
+            read_manifest,
+            app.state.settings.output_dir / job_id,
+        )
+        if manifest is None:
+            return _error_response(
+                JSONResponse,
+                status_code=404,
+                detail="任务不存在。",
+                code="job_not_found",
+            )
+
+        transcript_text = await run_in_threadpool(
+            read_transcript_text,
+            app.state.settings.output_dir,
+            manifest,
+        )
+        if not transcript_text:
+            return _error_response(
+                JSONResponse,
+                status_code=404,
+                detail="这条任务还没有转写文本。",
+                code="transcript_missing",
+                hint="先执行下载并转写，或对已下载任务补做转写。",
+            )
+
+        return {
+            "job": to_public_job(manifest),
+            "transcript_text": transcript_text,
+            "transcript_char_count": len(transcript_text),
+        }
 
     @app.post("/api/jobs")
     async def create_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -223,6 +274,58 @@ def create_app(settings: Optional[Settings] = None):
         if refreshed is None:
             raise HTTPException(status_code=500, detail="Job manifest was not updated.")
         return to_public_job(refreshed)
+
+    @app.get("/api/openclaw/health")
+    async def openclaw_health(request: Request):
+        auth_error = _openclaw_auth_error(JSONResponse, request, app.state.settings)
+        if auth_error is not None:
+            return auth_error
+        return build_openclaw_health_payload(app.state.settings)
+
+    @app.post("/api/openclaw/transcribe")
+    async def openclaw_transcribe(request: Request, payload: dict[str, Any]):
+        auth_error = _openclaw_auth_error(JSONResponse, request, app.state.settings)
+        if auth_error is not None:
+            return auth_error
+
+        raw_input = str(payload.get("raw_input", "")).strip()
+        if not raw_input:
+            return _error_response(
+                JSONResponse,
+                status_code=400,
+                detail="请先提供要转写的视频链接或完整分享文案。",
+                code="invalid_input",
+                hint="支持抖音、Bilibili、小红书、快手和 YouTube。",
+            )
+
+        request_settings = _build_request_settings(app.state.settings, payload)
+
+        try:
+            manifest = await run_in_threadpool(
+                process_job,
+                raw_input,
+                request_settings,
+                "run",
+            )
+            return build_openclaw_transcript_payload(request_settings, manifest)
+        except ValueError as exc:
+            error_info = classify_exception(exc)
+            return _error_response(
+                JSONResponse,
+                status_code=400,
+                detail=error_info.message,
+                code=error_info.code,
+                hint=error_info.hint,
+            )
+        except Exception as exc:
+            error_info = classify_exception(exc)
+            return _error_response(
+                JSONResponse,
+                status_code=500,
+                detail=error_info.message,
+                code=error_info.code,
+                hint=error_info.hint,
+            )
 
     @app.delete("/api/jobs/{job_id}")
     async def remove_job(job_id: str):
@@ -430,3 +533,17 @@ def _error_response(
             "error_hint": hint,
         },
     )
+
+
+def _openclaw_auth_error(response_class, request, settings: Settings):
+    try:
+        validate_openclaw_token(settings, request.headers.get(OPENCLAW_TOKEN_HEADER))
+    except PermissionError as exc:
+        return _error_response(
+            response_class,
+            status_code=401,
+            detail="OpenClaw 访问令牌无效。",
+            code="openclaw_auth_invalid",
+            hint="检查 X-OpenClaw-Token 或 OPENCLAW_SHARED_TOKEN 配置。",
+        )
+    return None

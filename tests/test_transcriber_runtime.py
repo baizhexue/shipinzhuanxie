@@ -20,6 +20,7 @@ class WhisperRuntimeFallbackTests(unittest.TestCase):
             ytdlp_cmd=('yt-dlp',),
             whisper_model='small',
             whisper_device=device,
+            openclaw_token=None,
         )
 
     def test_auto_device_falls_back_to_cpu_when_cuda_runtime_missing(self) -> None:

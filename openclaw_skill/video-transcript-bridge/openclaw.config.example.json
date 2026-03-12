@@ -1,0 +1,12 @@
+{
+  "skills": {
+    "entries": {
+      "video-transcript-bridge": {
+        "env": {
+          "VIDEO_TRANSCRIPT_API_URL": "http://192.168.50.201:4455",
+          "VIDEO_TRANSCRIPT_API_TOKEN": "REPLACE_WITH_YOUR_SHARED_TOKEN"
+        }
+      }
+    }
+  }
+}

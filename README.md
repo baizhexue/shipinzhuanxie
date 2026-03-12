@@ -273,3 +273,11 @@ GitHub Actions 会在 `main` 和 PR 上自动执行同样的基础检查。
 ## 许可证
 
 项目采用 MIT License，见 [LICENSE](LICENSE)。
+
+## OpenClaw 局域网技能
+
+- OpenClaw 专用接口：`GET /api/openclaw/health`、`POST /api/openclaw/transcribe`
+- 技能目录：`openclaw_skill/video-transcript-bridge`
+- 安装脚本：`python scripts/install_openclaw_skill.py --force`
+- 接入说明：`docs/openclaw_integration.md`
+- 需要配置环境变量：`VIDEO_TRANSCRIPT_API_URL`、`VIDEO_TRANSCRIPT_API_TOKEN`、`OPENCLAW_SHARED_TOKEN`

@@ -23,6 +23,7 @@ def _make_settings(output_dir: Path) -> Settings:
         ytdlp_cmd=("yt-dlp",),
         whisper_model="small",
         whisper_device="cpu",
+        openclaw_token=None,
     )
 
 

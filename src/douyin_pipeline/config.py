@@ -19,6 +19,7 @@ class Settings:
     ytdlp_cmd: tuple[str, ...]
     whisper_model: str
     whisper_device: str
+    openclaw_token: Optional[str]
 
 
 def load_settings(
@@ -36,6 +37,7 @@ def load_settings(
     env_whisper_device = os.getenv("WHISPER_DEVICE", "auto")
     env_cookies_file = os.getenv("DOUYIN_COOKIES_FILE")
     env_cookies_browser = os.getenv("DOUYIN_COOKIES_BROWSER")
+    env_openclaw_token = os.getenv("OPENCLAW_SHARED_TOKEN")
 
     resolved_cookies = cookies_file or env_cookies_file
     resolved_browser = cookies_from_browser or env_cookies_browser
@@ -48,6 +50,7 @@ def load_settings(
         ytdlp_cmd=_parse_command(env_ytdlp_bin),
         whisper_model=whisper_model or env_whisper_model,
         whisper_device=whisper_device or env_whisper_device,
+        openclaw_token=env_openclaw_token or None,
     )
 
 

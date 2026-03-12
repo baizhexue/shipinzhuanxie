@@ -1,5 +1,23 @@
 # 更新日志
 
+## [0.9.0] - 2026-03-12
+
+### 功能新增
+
+- 新增 OpenClaw 专用局域网接口：`GET /api/openclaw/health` 和 `POST /api/openclaw/transcribe`，支持同步返回完整转写稿。
+- 新增 OpenClaw 技能目录 `openclaw_skill/video-transcript-bridge`，包含 `SKILL.md`、helper 脚本和配置示例。
+- 新增任务全文接口 `GET /api/jobs/{job_id}/transcript`，方便后续系统直接取完整文本。
+- 新增 `scripts/install_openclaw_skill.py`，用于把技能目录安装到 `~/.openclaw/skills/`。
+
+### 修复
+
+- 收口跨机器调用的鉴权方式，避免局域网内匿名直接调用转写接口。
+- 补齐 `Settings` 和测试用例里的新配置字段，避免新增 OpenClaw 配置后本地测试失效。
+
+### 优化
+
+- 梳理 OpenClaw 场景的产品边界：网页继续承担人工操作入口，OpenClaw 改走专用同步桥接接口，职责更清晰。
+- 补充 `docs/openclaw_integration.md` 和 `.env.example`，把局域网部署和技能安装路径固定下来。
 本项目使用中文维护版本迭代记录，按功能新增、修复、优化归档。
 
 ## [0.8.2] - 2026-03-09
