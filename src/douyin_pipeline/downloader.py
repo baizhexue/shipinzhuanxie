@@ -11,6 +11,7 @@ import subprocess
 from typing import Optional
 
 from douyin_pipeline.config import Settings
+from douyin_pipeline.downloader_fallbacks import resolve_download_fallback
 from douyin_pipeline.parser import detect_source_platform
 from douyin_pipeline.subprocess_utils import run_command
 
@@ -60,19 +61,9 @@ def download_video(
     try:
         return _download_with_ytdlp(source_url, settings, job_dir)
     except RuntimeError as exc:
-        platform = detect_source_platform(source_url)
-        if _should_use_douyin_browser_fallback(source_url, exc):
-            from douyin_pipeline.douyin_browser import download_with_browser
-
-            return download_with_browser(source_url, job_dir)
-        if _should_use_xiaohongshu_page_fallback(platform, exc):
-            from douyin_pipeline.xiaohongshu_page import download_with_page
-
-            return download_with_page(source_url, job_dir)
-        if _should_use_kuaishou_page_fallback(platform, exc):
-            from douyin_pipeline.kuaishou_page import download_with_page
-
-            return download_with_page(source_url, job_dir)
+        fallback = resolve_download_fallback(source_url, exc)
+        if fallback is not None:
+            return fallback(source_url, job_dir)
         raise
 
 
@@ -147,24 +138,6 @@ def _download_with_ytdlp(
         video_path=video_path,
         job_dir=job_dir,
     )
-
-
-def _should_use_douyin_browser_fallback(source_url: str, error: RuntimeError) -> bool:
-    text = str(error).lower()
-    return (
-        "douyin.com" in source_url
-        and ("fresh cookies" in text or "timed out after" in text)
-    )
-
-
-def _should_use_xiaohongshu_page_fallback(platform: str, error: RuntimeError) -> bool:
-    return platform == "xiaohongshu"
-
-
-def _should_use_kuaishou_page_fallback(platform: str, error: RuntimeError) -> bool:
-    return platform == "kuaishou"
-
-
 def _extract_title(stdout: str) -> str:
     lines = [line.strip() for line in stdout.splitlines() if line.strip()]
     for line in reversed(lines):
