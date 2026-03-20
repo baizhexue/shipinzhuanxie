@@ -15,12 +15,10 @@ from douyin_pipeline.doctor import has_failures, run_checks
 from douyin_pipeline.errors import classify_exception
 from douyin_pipeline.jobs import (
     ACTIVE_STATUSES,
-    delete_job,
     list_job_manifests,
     read_manifest,
     read_transcript_text,
     to_public_job,
-    write_manifest,
 )
 from douyin_pipeline.openclaw_api import (
     build_openclaw_health_payload,
@@ -29,6 +27,15 @@ from douyin_pipeline.openclaw_api import (
 from douyin_pipeline.pipeline import (
     prepare_job,
     process_job,
+)
+from douyin_pipeline.web_jobs import (
+    can_transcribe_manifest,
+    delete_job_payload,
+    get_job_manifest,
+    get_job_transcript_payload,
+    get_public_job,
+    list_jobs_payload,
+    queue_existing_transcribe,
 )
 from douyin_pipeline.web_support import (
     build_request_settings,
@@ -92,47 +99,32 @@ def create_app(settings: Optional[Settings] = None):
         active_only: bool = False,
     ) -> dict[str, Any]:
         await maybe_sweep_stale_jobs(app, run_in_threadpool)
-        safe_limit = max(1, min(limit, 50))
         payload = await run_in_threadpool(
-            lambda: list_job_manifests(
-                app.state.settings.output_dir,
+            lambda: list_jobs_payload(
+                app.state.settings,
                 offset=max(offset, 0),
-                limit=safe_limit,
+                limit=limit,
                 q=q,
                 status=status,
                 action=action,
                 active_only=active_only,
             )
         )
-        return {
-            "jobs": [to_public_job(manifest) for manifest in payload["items"]],
-            "offset": payload["offset"],
-            "limit": payload["limit"],
-            "filtered_total": payload["filtered_total"],
-            "total_jobs": payload["total_jobs"],
-            "has_more": payload["has_more"],
-            "summary": payload["summary"],
-        }
+        return payload
 
     @app.get("/api/jobs/{job_id}")
     async def job(job_id: str) -> dict[str, Any]:
         await maybe_sweep_stale_jobs(app, run_in_threadpool)
-        manifest = await run_in_threadpool(
-            read_manifest,
-            app.state.settings.output_dir / job_id,
-        )
-        if manifest is None:
+        payload = await run_in_threadpool(get_public_job, app.state.settings, job_id)
+        if payload is None:
             raise HTTPException(status_code=404, detail="Job not found.")
-        return to_public_job(manifest)
+        return payload
 
     @app.get("/api/jobs/{job_id}/transcript")
     async def job_transcript(job_id: str) -> dict[str, Any]:
         await maybe_sweep_stale_jobs(app, run_in_threadpool)
-        manifest = await run_in_threadpool(
-            read_manifest,
-            app.state.settings.output_dir / job_id,
-        )
-        if manifest is None:
+        payload = await run_in_threadpool(get_job_transcript_payload, app.state.settings, job_id)
+        if payload is None:
             return error_response(
                 JSONResponse,
                 status_code=404,
@@ -140,12 +132,7 @@ def create_app(settings: Optional[Settings] = None):
                 code="job_not_found",
             )
 
-        transcript_text = await run_in_threadpool(
-            read_transcript_text,
-            app.state.settings.output_dir,
-            manifest,
-        )
-        if not transcript_text:
+        if not payload["transcript_text"]:
             return error_response(
                 JSONResponse,
                 status_code=404,
@@ -154,11 +141,7 @@ def create_app(settings: Optional[Settings] = None):
                 hint="先执行下载并转写，或对已下载任务补做转写。",
             )
 
-        return {
-            "job": to_public_job(manifest),
-            "transcript_text": transcript_text,
-            "transcript_char_count": len(transcript_text),
-        }
+        return payload
 
     @app.post("/api/jobs")
     async def create_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -197,18 +180,17 @@ def create_app(settings: Optional[Settings] = None):
 
         _run_job_in_background(prepared_job, request_settings)
 
-        manifest = read_manifest(prepared_job.job_dir)
+        manifest = await run_in_threadpool(get_public_job, request_settings, prepared_job.job_dir.name)
         if manifest is None:
             raise HTTPException(status_code=500, detail="Job manifest was not created.")
 
-        return to_public_job(manifest)
+        return manifest
 
     @app.post("/api/jobs/{job_id}/transcribe")
     async def transcribe_job(job_id: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         payload = payload or {}
         request_settings = build_request_settings(app.state.settings, payload)
-        job_dir = app.state.settings.output_dir / job_id
-        manifest = read_manifest(job_dir)
+        manifest = await run_in_threadpool(get_job_manifest, app.state.settings, job_id)
         if manifest is None:
             return error_response(
                 JSONResponse,
@@ -232,34 +214,15 @@ def create_app(settings: Optional[Settings] = None):
                 code="video_missing_for_transcribe",
                 hint="请先完成视频下载。",
             )
-        if manifest.get("transcript_path"):
+        if not can_transcribe_manifest(manifest):
             return to_public_job(manifest)
 
-        queued_manifest = dict(manifest)
-        queued_manifest.update(
-            {
-                "status": "transcribing",
-                "detail": "Preparing transcript for existing video.",
-                "phase": "extracting_audio",
-                "progress_percent": 34.0,
-                "eta_seconds": None,
-                "processed_seconds": 0.0,
-                "duration_seconds": None,
-                "error": None,
-                "error_code": None,
-                "error_kind": None,
-                "error_hint": None,
-                "technical_error": None,
-            }
-        )
-        write_manifest(job_dir, queued_manifest)
-
-        _run_transcribe_in_background(job_dir, request_settings)
-
-        refreshed = read_manifest(job_dir)
+        refreshed = await run_in_threadpool(queue_existing_transcribe, request_settings, job_id)
         if refreshed is None:
             raise HTTPException(status_code=500, detail="Job manifest was not updated.")
-        return to_public_job(refreshed)
+
+        _run_transcribe_in_background(request_settings.output_dir / job_id, request_settings)
+        return refreshed
 
     @app.get("/api/openclaw/health")
     async def openclaw_health(request: Request):
@@ -317,7 +280,7 @@ def create_app(settings: Optional[Settings] = None):
     async def remove_job(job_id: str):
         await maybe_sweep_stale_jobs(app, run_in_threadpool)
         try:
-            deleted = await run_in_threadpool(delete_job, app.state.settings.output_dir, job_id)
+            return await run_in_threadpool(delete_job_payload, app.state.settings, job_id)
         except ValueError as exc:
             message = str(exc)
             if message == "Job not found.":
@@ -341,11 +304,6 @@ def create_app(settings: Optional[Settings] = None):
                 detail=message,
                 code="job_delete_failed",
             )
-
-        return {
-            "deleted_job": to_public_job(deleted),
-            "message": "任务已删除。",
-        }
 
     @app.get("/api/settings/telegram")
     async def telegram_settings() -> dict[str, Any]:
