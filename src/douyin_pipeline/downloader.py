@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -12,6 +11,13 @@ from typing import Optional
 
 from douyin_pipeline.config import Settings
 from douyin_pipeline.downloader_fallbacks import resolve_download_fallback
+from douyin_pipeline.downloader_runtime import (
+    build_ytdlp_process_env as _runtime_build_ytdlp_process_env,
+    can_use_deno_compat_mode as _runtime_can_use_deno_compat_mode,
+    detect_ytdlp_js_runtime as _runtime_detect_ytdlp_js_runtime,
+    find_common_js_runtime_path as _runtime_find_common_js_runtime_path,
+    ytdlp_supports_js_runtimes as _runtime_ytdlp_supports_js_runtimes,
+)
 from douyin_pipeline.parser import detect_source_platform
 from douyin_pipeline.subprocess_utils import run_command
 
@@ -199,81 +205,23 @@ def _has_separate_audio_stream(job_dir: Path) -> bool:
 
 
 def _detect_ytdlp_js_runtime() -> Optional[str]:
-    node_on_path = shutil.which("node")
-    if node_on_path:
-        return "node"
-
-    node_candidate = _find_common_js_runtime_path("node")
-    if node_candidate:
-        return f"node:{node_candidate}"
-
-    deno_on_path = shutil.which("deno")
-    if deno_on_path:
-        return "deno"
-
-    deno_candidate = _find_common_js_runtime_path("deno")
-    if deno_candidate:
-        return f"deno:{deno_candidate}"
-
-    return None
+    return _runtime_detect_ytdlp_js_runtime(which=shutil.which, home_factory=Path.home)
 
 
 def _find_common_js_runtime_path(name: str) -> Optional[str]:
-    home = Path.home()
-    candidates = []
-
-    if name == "node":
-        candidates.extend(
-            [
-                Path("/opt/homebrew/bin/node"),
-                Path("/usr/local/bin/node"),
-                home / ".local/bin/node",
-            ]
-        )
-    elif name == "deno":
-        candidates.extend(
-            [
-                home / ".deno/bin/deno",
-                home / ".local/bin/deno",
-                Path("/opt/homebrew/bin/deno"),
-                Path("/usr/local/bin/deno"),
-            ]
-        )
-
-    for candidate in candidates:
-        if candidate.exists() and candidate.is_file():
-            return str(candidate)
-
-    return None
+    return _runtime_find_common_js_runtime_path(name, home_factory=Path.home)
 
 
 def _ytdlp_supports_js_runtimes(command: tuple[str, ...]) -> bool:
-    try:
-        completed = run_command(
-            [*command, "--help"],
-            timeout=YTDLP_HELP_TIMEOUT_SECONDS,
-        )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return False
-
-    help_text = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
-    return "--js-runtimes" in help_text
+    return _runtime_ytdlp_supports_js_runtimes(
+        command,
+        timeout=YTDLP_HELP_TIMEOUT_SECONDS,
+    )
 
 
 def _can_use_deno_compat_mode(js_runtime: str) -> bool:
-    return js_runtime == "deno" or js_runtime.startswith("deno:")
+    return _runtime_can_use_deno_compat_mode(js_runtime)
 
 
 def _build_ytdlp_process_env(js_runtime: str) -> Optional[dict[str, str]]:
-    if not js_runtime.startswith("deno:"):
-        return None
-
-    _, _, runtime_path = js_runtime.partition(":")
-    if not runtime_path:
-        return None
-
-    runtime_dir = str(Path(runtime_path).expanduser().resolve().parent)
-    env = os.environ.copy()
-    existing_path = env.get("PATH", "")
-    env["PATH"] = runtime_dir if not existing_path else f"{runtime_dir}{os.pathsep}{existing_path}"
-    return env
+    return _runtime_build_ytdlp_process_env(js_runtime)
