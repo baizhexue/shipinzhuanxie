@@ -357,7 +357,7 @@ class TelegramBotClient:
     ) -> dict[str, Any]:
         fields = {"chat_id": str(chat_id)}
         if caption:
-            fields["caption"] = _truncate_text(caption, 900)
+            fields["caption"] = truncate_text(caption, 900)
         return self._multipart_request("sendDocument", fields=fields, file_field="document", file_path=document_path)
 
     def _json_request(
@@ -495,18 +495,6 @@ def _normalize_public_base_url(value: Optional[str]) -> Optional[str]:
     return value.rstrip("/")
 
 
-def _truncate_text(value: str, limit: int) -> str:
-    return truncate_text(value, limit)
-
-
-def _help_text() -> str:
-    return build_help_text()
-
-
-def _build_failure_text(message: str, hint: Optional[str]) -> str:
-    return build_failure_text(message, hint)
-
-
 class TelegramProgressReporter:
     def __init__(
         self,
@@ -558,17 +546,3 @@ class TelegramProgressReporter:
     def _send(self, message: str) -> None:
         self._last_sent_at = monotonic()
         self._client.send_message(self._chat_id, message)
-
-
-def _phase_progress_message(manifest: dict[str, Any]) -> Optional[str]:
-    return phase_progress_message(manifest)
-
-
-def _transcribing_progress_message(manifest: dict[str, Any], percent: float) -> str:
-    return transcribing_progress_message(manifest, percent)
-
-
-def _format_clock(seconds: float) -> str:
-    from douyin_pipeline.telegram_messages import format_clock
-
-    return format_clock(seconds)
