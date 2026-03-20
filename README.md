@@ -245,6 +245,7 @@ output/
 - [CHANGELOG.md](CHANGELOG.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [.github/workflows/ci.yml](.github/workflows/ci.yml)
+- [docs/project_state.md](docs/project_state.md)
 
 发布相关：
 
