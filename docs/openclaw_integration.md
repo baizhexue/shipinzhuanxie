@@ -56,7 +56,9 @@
 适用条件：
 
 - OpenClaw 和视频转写服务在同一台机器上
-- 服务本机监听 `127.0.0.1:4455`
+- 服务本机监听当前主服务地址
+- Docker 模式默认是 `127.0.0.1:4444`
+- 本地模式默认是 `127.0.0.1:8000`
 
 执行：
 
@@ -67,7 +69,7 @@ python scripts/install_openclaw_skill.py --force --mode local
 脚本会自动完成：
 
 - 安装 skill 到 `~/.openclaw/workspace/skills/video-transcript-bridge`
-- 把 `VIDEO_TRANSCRIPT_API_URL` 写成 `http://127.0.0.1:4455`
+- 把 `VIDEO_TRANSCRIPT_API_URL` 写成当前主服务地址
 - 自动生成 `VIDEO_TRANSCRIPT_API_TOKEN`
 - 把同一份 token 同步写进当前项目 `.env` 的 `OPENCLAW_SHARED_TOKEN`
 
@@ -79,12 +81,12 @@ python scripts/install_openclaw_skill.py --force --mode local
 
 - OpenClaw 在机器 A
 - 视频转写服务在机器 B
-- 例如服务地址是 `http://192.168.50.201:4455`
+- 例如服务地址是 `http://192.168.50.201:4444`
 
 执行：
 
 ```bash
-python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455
+python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444
 ```
 
 脚本会自动完成：
@@ -118,7 +120,7 @@ python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192
 跨机器部署：
 
 1. 确认服务端已经运行
-2. 在 OpenClaw 机器执行 `python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455`
+2. 在 OpenClaw 机器执行 `python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444`
 3. 把生成的 token 同步到服务端 `.env`
 4. 重启 OpenClaw
 

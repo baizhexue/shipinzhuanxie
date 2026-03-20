@@ -4,11 +4,12 @@
 
 `抖音 / Bilibili / 小红书 / 快手 / YouTube 分享文案或链接 -> 下载视频 -> 提取音频 -> 转成文字`
 
-当前项目提供 3 个入口：
+当前项目提供 4 个入口：
 
 - CLI
 - 本地 Web 页面
 - Telegram 机器人
+- OpenClaw 局域网技能入口
 
 ## 功能
 
@@ -37,6 +38,8 @@
 ## 一键部署
 
 仓库下载后，现在可以直接走一键部署。
+一键部署负责拉起主服务。
+如果你还要给 OpenClaw 使用，再额外执行一次 `scripts/install_openclaw_skill.py`。
 
 Windows：
 
@@ -65,6 +68,12 @@ bash ./scripts/one_click_deploy.sh
 
 - Docker 模式：`http://127.0.0.1:4444`
 - 本地模式：`http://127.0.0.1:8000`
+
+补充：
+
+- OpenClaw 现在直接复用主服务端口，不再单独部署 `4455`
+- 同机部署时，OpenClaw 应该指向当前主服务地址
+- 局域网跨机器部署时，直接填写 Web 服务地址，例如 `http://192.168.50.201:4444`
 
 常用参数：
 
@@ -320,7 +329,7 @@ GitHub Actions 会在 `main` 和 PR 上自动执行同样的基础检查。
 - 技能目录：`skills/video-transcript-bridge`
 - 安装脚本：
   - 同机部署：`python scripts/install_openclaw_skill.py --force --mode local`
-  - 跨机器局域网：`python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455`
+  - 跨机器局域网：`python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444`
 - 接入说明：`docs/openclaw_integration.md`
 - 安装脚本会自动：
   - 复制技能到 `~/.openclaw/workspace/skills/video-transcript-bridge`
@@ -347,7 +356,8 @@ python scripts/install_openclaw_skill.py --force --mode local
 
 - 把 skill 安装到 `~/.openclaw/workspace/skills/video-transcript-bridge`
 - 在 `~/.openclaw/openclaw.json` 写入：
-  - `VIDEO_TRANSCRIPT_API_URL=http://127.0.0.1:4455`
+  - Docker 模式：`VIDEO_TRANSCRIPT_API_URL=http://127.0.0.1:4444`
+  - 本地模式：`VIDEO_TRANSCRIPT_API_URL=http://127.0.0.1:8000`
   - 自动生成的 `VIDEO_TRANSCRIPT_API_TOKEN`
 - 在当前项目的 `.env` 里写入：
   - `OPENCLAW_SHARED_TOKEN=<同一份自动生成的 token>`
@@ -369,13 +379,13 @@ python scripts/install_openclaw_skill.py --force --mode local
 例如服务端是：
 
 ```text
-http://192.168.50.201:4455
+http://192.168.50.201:4444
 ```
 
 在 OpenClaw 那台机器执行：
 
 ```bash
-python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455
+python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444
 ```
 
 脚本会自动：
