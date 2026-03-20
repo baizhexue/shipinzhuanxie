@@ -1,11 +1,8 @@
 ﻿from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from dataclasses import replace
 from pathlib import Path
 from threading import Thread
 from typing import Any, Optional
-import time
 
 try:
     from fastapi import Request
@@ -22,29 +19,32 @@ from douyin_pipeline.jobs import (
     list_job_manifests,
     read_manifest,
     read_transcript_text,
-    sweep_stale_jobs,
     to_public_job,
     write_manifest,
 )
 from douyin_pipeline.openclaw_api import (
-    OPENCLAW_TOKEN_HEADER,
     build_openclaw_health_payload,
     build_openclaw_transcript_payload,
-    validate_openclaw_token,
 )
 from douyin_pipeline.pipeline import (
     prepare_job,
     process_job,
-    run_prepared_job,
-    transcribe_existing_job,
 )
-from douyin_pipeline.telegram_manager import TelegramManager
+from douyin_pipeline.web_support import (
+    build_request_settings,
+    create_lifespan,
+    error_response,
+    maybe_sweep_stale_jobs,
+    openclaw_auth_error,
+    run_job_in_background_with_thread,
+    run_transcribe_in_background_with_thread,
+    validate_telegram_payload,
+)
 
 
 ASSET_DIR = Path(__file__).with_name("web_assets")
 STATIC_DIR = ASSET_DIR / "static"
 INDEX_FILE = ASSET_DIR / "index.html"
-STALE_SWEEP_INTERVAL_SECONDS = 30.0
 
 
 def create_app(settings: Optional[Settings] = None):
@@ -59,19 +59,7 @@ def create_app(settings: Optional[Settings] = None):
     resolved_settings = settings or load_settings()
     resolved_settings.output_dir.mkdir(parents=True, exist_ok=True)
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        sweep_stale_jobs(resolved_settings.output_dir)
-        manager = TelegramManager(resolved_settings)
-        app.state.telegram_manager = manager
-        app.state.last_stale_sweep_monotonic = time.monotonic()
-        manager.ensure_started_from_saved()
-        try:
-            yield
-        finally:
-            manager.stop()
-
-    app = FastAPI(title="视频转写助手", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="视频转写助手", version=__version__, lifespan=create_lifespan(resolved_settings))
     app.state.settings = resolved_settings
 
     app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
@@ -103,7 +91,7 @@ def create_app(settings: Optional[Settings] = None):
         action: Optional[str] = None,
         active_only: bool = False,
     ) -> dict[str, Any]:
-        await _maybe_sweep_stale_jobs(app, run_in_threadpool)
+        await maybe_sweep_stale_jobs(app, run_in_threadpool)
         safe_limit = max(1, min(limit, 50))
         payload = await run_in_threadpool(
             lambda: list_job_manifests(
@@ -128,7 +116,7 @@ def create_app(settings: Optional[Settings] = None):
 
     @app.get("/api/jobs/{job_id}")
     async def job(job_id: str) -> dict[str, Any]:
-        await _maybe_sweep_stale_jobs(app, run_in_threadpool)
+        await maybe_sweep_stale_jobs(app, run_in_threadpool)
         manifest = await run_in_threadpool(
             read_manifest,
             app.state.settings.output_dir / job_id,
@@ -139,13 +127,13 @@ def create_app(settings: Optional[Settings] = None):
 
     @app.get("/api/jobs/{job_id}/transcript")
     async def job_transcript(job_id: str) -> dict[str, Any]:
-        await _maybe_sweep_stale_jobs(app, run_in_threadpool)
+        await maybe_sweep_stale_jobs(app, run_in_threadpool)
         manifest = await run_in_threadpool(
             read_manifest,
             app.state.settings.output_dir / job_id,
         )
         if manifest is None:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=404,
                 detail="任务不存在。",
@@ -158,7 +146,7 @@ def create_app(settings: Optional[Settings] = None):
             manifest,
         )
         if not transcript_text:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=404,
                 detail="这条任务还没有转写文本。",
@@ -178,7 +166,7 @@ def create_app(settings: Optional[Settings] = None):
         action = str(payload.get("action", "download")).strip()
 
         if not raw_input:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=400,
                 detail="请先粘贴分享文案或链接。",
@@ -186,20 +174,20 @@ def create_app(settings: Optional[Settings] = None):
                 hint="支持完整分享文案、短链或直接 URL。",
             )
         if action not in {"download", "run"}:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=400,
                 detail="当前只支持 download 和 run 两种任务模式。",
                 code="invalid_action",
             )
 
-        request_settings = _build_request_settings(app.state.settings, payload)
+        request_settings = build_request_settings(app.state.settings, payload)
 
         try:
             prepared_job = prepare_job(raw_input, request_settings, action)
         except ValueError as exc:
             error_info = classify_exception(exc)
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=400,
                 detail=error_info.message,
@@ -207,12 +195,7 @@ def create_app(settings: Optional[Settings] = None):
                 hint=error_info.hint,
             )
 
-        thread = Thread(
-            target=_run_job_in_background,
-            args=(prepared_job, request_settings),
-            daemon=True,
-        )
-        thread.start()
+        _run_job_in_background(prepared_job, request_settings)
 
         manifest = read_manifest(prepared_job.job_dir)
         if manifest is None:
@@ -223,11 +206,11 @@ def create_app(settings: Optional[Settings] = None):
     @app.post("/api/jobs/{job_id}/transcribe")
     async def transcribe_job(job_id: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         payload = payload or {}
-        request_settings = _build_request_settings(app.state.settings, payload)
+        request_settings = build_request_settings(app.state.settings, payload)
         job_dir = app.state.settings.output_dir / job_id
         manifest = read_manifest(job_dir)
         if manifest is None:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=404,
                 detail="任务不存在。",
@@ -235,14 +218,14 @@ def create_app(settings: Optional[Settings] = None):
                 hint="刷新历史记录后再试。",
             )
         if manifest.get("status") in ACTIVE_STATUSES:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=409,
                 detail="任务仍在执行中，暂时不能重复转写。",
                 code="job_running",
             )
         if not manifest.get("video_path"):
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=400,
                 detail="这条任务没有可转写的视频文件。",
@@ -271,12 +254,7 @@ def create_app(settings: Optional[Settings] = None):
         )
         write_manifest(job_dir, queued_manifest)
 
-        thread = Thread(
-            target=_run_transcribe_in_background,
-            args=(job_dir, request_settings),
-            daemon=True,
-        )
-        thread.start()
+        _run_transcribe_in_background(job_dir, request_settings)
 
         refreshed = read_manifest(job_dir)
         if refreshed is None:
@@ -285,20 +263,20 @@ def create_app(settings: Optional[Settings] = None):
 
     @app.get("/api/openclaw/health")
     async def openclaw_health(request: Request):
-        auth_error = _openclaw_auth_error(JSONResponse, request, app.state.settings)
+        auth_error = openclaw_auth_error(JSONResponse, request, app.state.settings)
         if auth_error is not None:
             return auth_error
         return build_openclaw_health_payload(app.state.settings)
 
     @app.post("/api/openclaw/transcribe")
     async def openclaw_transcribe(request: Request, payload: dict[str, Any]):
-        auth_error = _openclaw_auth_error(JSONResponse, request, app.state.settings)
+        auth_error = openclaw_auth_error(JSONResponse, request, app.state.settings)
         if auth_error is not None:
             return auth_error
 
         raw_input = str(payload.get("raw_input", "")).strip()
         if not raw_input:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=400,
                 detail="请先提供要转写的视频链接或完整分享文案。",
@@ -306,7 +284,7 @@ def create_app(settings: Optional[Settings] = None):
                 hint="支持抖音、Bilibili、小红书、快手和 YouTube。",
             )
 
-        request_settings = _build_request_settings(app.state.settings, payload)
+        request_settings = build_request_settings(app.state.settings, payload)
 
         try:
             manifest = await run_in_threadpool(
@@ -318,7 +296,7 @@ def create_app(settings: Optional[Settings] = None):
             return build_openclaw_transcript_payload(request_settings, manifest)
         except ValueError as exc:
             error_info = classify_exception(exc)
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=400,
                 detail=error_info.message,
@@ -327,7 +305,7 @@ def create_app(settings: Optional[Settings] = None):
             )
         except Exception as exc:
             error_info = classify_exception(exc)
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=500,
                 detail=error_info.message,
@@ -337,27 +315,27 @@ def create_app(settings: Optional[Settings] = None):
 
     @app.delete("/api/jobs/{job_id}")
     async def remove_job(job_id: str):
-        await _maybe_sweep_stale_jobs(app, run_in_threadpool)
+        await maybe_sweep_stale_jobs(app, run_in_threadpool)
         try:
             deleted = await run_in_threadpool(delete_job, app.state.settings.output_dir, job_id)
         except ValueError as exc:
             message = str(exc)
             if message == "Job not found.":
-                return _error_response(
+                return error_response(
                     JSONResponse,
                     status_code=404,
                     detail="任务不存在。",
                     code="job_not_found",
                 )
             if message == "Running jobs cannot be deleted.":
-                return _error_response(
+                return error_response(
                     JSONResponse,
                     status_code=409,
                     detail="运行中的任务不能删除。",
                     code="job_running",
                     hint="请等任务结束后再删除。",
                 )
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=400,
                 detail=message,
@@ -375,21 +353,21 @@ def create_app(settings: Optional[Settings] = None):
 
     @app.put("/api/settings/telegram")
     async def save_telegram_settings(payload: dict[str, Any]) -> dict[str, Any]:
-        validation_error = _validate_telegram_payload(app.state.telegram_manager, payload)
+        validation_error = validate_telegram_payload(app.state.telegram_manager, payload)
         if validation_error is not None:
-            return _error_response(JSONResponse, status_code=400, **validation_error)
+            return error_response(JSONResponse, status_code=400, **validation_error)
 
         try:
             return await run_in_threadpool(app.state.telegram_manager.save_config, payload)
         except ValueError as exc:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=400,
                 detail=str(exc),
                 code="telegram_config_invalid",
             )
         except Exception as exc:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=500,
                 detail="Telegram 配置保存失败。",
@@ -401,14 +379,14 @@ def create_app(settings: Optional[Settings] = None):
     async def start_telegram(payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         requested_payload = dict(payload or {})
         requested_payload["enabled"] = True
-        validation_error = _validate_telegram_payload(app.state.telegram_manager, requested_payload)
+        validation_error = validate_telegram_payload(app.state.telegram_manager, requested_payload)
         if validation_error is not None:
-            return _error_response(JSONResponse, status_code=400, **validation_error)
+            return error_response(JSONResponse, status_code=400, **validation_error)
 
         try:
             return await run_in_threadpool(app.state.telegram_manager.save_config, requested_payload)
         except Exception as exc:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=500,
                 detail="Telegram 机器人启动失败。",
@@ -424,7 +402,7 @@ def create_app(settings: Optional[Settings] = None):
                 {"enabled": False},
             )
         except Exception as exc:
-            return _error_response(
+            return error_response(
                 JSONResponse,
                 status_code=500,
                 detail="Telegram 机器人停止失败。",
@@ -467,102 +445,8 @@ def main() -> int:
 
 
 def _run_job_in_background(prepared_job, settings: Settings) -> None:
-    try:
-        run_prepared_job(prepared_job, settings)
-    except Exception:
-        return
+    run_job_in_background_with_thread(prepared_job, settings, Thread)
 
 
 def _run_transcribe_in_background(job_dir: Path, settings: Settings) -> None:
-    try:
-        transcribe_existing_job(job_dir, settings)
-    except Exception:
-        return
-
-
-def _build_request_settings(base: Settings, payload: dict[str, Any]) -> Settings:
-    cookies_value = str(payload.get("cookies", "")).strip()
-    browser_value = str(payload.get("cookies_browser", "")).strip()
-    model_value = str(payload.get("model", "")).strip()
-    device_value = str(payload.get("device", "")).strip()
-
-    return replace(
-        base,
-        cookies_file=Path(cookies_value).expanduser().resolve() if cookies_value else base.cookies_file,
-        cookies_from_browser=browser_value or base.cookies_from_browser,
-        whisper_model=model_value or base.whisper_model,
-        whisper_device=device_value or base.whisper_device,
-    )
-
-
-def _validate_telegram_payload(manager: TelegramManager, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
-    enabled = bool(payload.get("enabled", False))
-    clear_token = bool(payload.get("clear_token", False))
-    supplied_token = str(payload.get("token", "") or "").strip()
-    current_state = manager.get_public_state()
-    has_saved_token = bool(current_state["config"].get("has_token"))
-    will_have_token = (not clear_token) and bool(supplied_token or has_saved_token)
-
-    if enabled and not will_have_token:
-        return {
-            "detail": "启用 Telegram 机器人前需要先配置 token。",
-            "code": "telegram_token_missing",
-            "hint": "先保存 token，再启动机器人。",
-        }
-
-    allowed_chat_ids = payload.get("allowed_chat_ids")
-    if allowed_chat_ids is not None:
-        try:
-            values = [item.strip() for item in str(allowed_chat_ids).split(",") if item.strip()]
-            for item in values:
-                int(item)
-        except ValueError:
-            return {
-                "detail": "允许访问的 chat id 格式不正确。",
-                "code": "telegram_chat_ids_invalid",
-                "hint": "多个 chat id 用英文逗号分隔。",
-            }
-
-    return None
-
-
-def _error_response(
-    response_class,
-    *,
-    status_code: int,
-    detail: str,
-    code: str,
-    hint: Optional[str] = None,
-):
-    return response_class(
-        status_code=status_code,
-        content={
-            "detail": detail,
-            "error_code": code,
-            "error_hint": hint,
-        },
-    )
-
-
-def _openclaw_auth_error(response_class, request, settings: Settings):
-    try:
-        validate_openclaw_token(settings, request.headers.get(OPENCLAW_TOKEN_HEADER))
-    except PermissionError as exc:
-        return _error_response(
-            response_class,
-            status_code=401,
-            detail="OpenClaw 访问令牌无效。",
-            code="openclaw_auth_invalid",
-            hint="检查 X-OpenClaw-Token 或 OPENCLAW_SHARED_TOKEN 配置。",
-        )
-    return None
-
-
-async def _maybe_sweep_stale_jobs(app, run_in_threadpool, *, force: bool = False) -> None:
-    last_sweep = float(getattr(app.state, "last_stale_sweep_monotonic", 0.0) or 0.0)
-    now = time.monotonic()
-    if not force and (now - last_sweep) < STALE_SWEEP_INTERVAL_SECONDS:
-        return
-
-    await run_in_threadpool(sweep_stale_jobs, app.state.settings.output_dir)
-    app.state.last_stale_sweep_monotonic = now
+    run_transcribe_in_background_with_thread(job_dir, settings, Thread)
