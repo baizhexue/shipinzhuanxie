@@ -212,10 +212,24 @@ bash ./scripts/one_click_deploy.sh
 
 - `http://127.0.0.1:4444`
 
+如果你的电脑里 `4444` 已经被别的软件占用了，可以换一个端口。
+
+本地模式示例：
+
+- Windows：
+  - `powershell -ExecutionPolicy Bypass -File .\scripts\one_click_deploy.ps1 --port 5555`
+- macOS / Linux：
+  - `bash ./scripts/one_click_deploy.sh --port 5555`
+
+换完以后，打开：
+
+- `http://127.0.0.1:5555`
+
 补充：
 
 - 同机部署时，OpenClaw 应该指向当前主服务地址
 - 局域网跨机器部署时，直接填写 Web 服务地址，例如 `http://192.168.50.201:4444`
+- 如果你改了端口，OpenClaw 的 `VIDEO_TRANSCRIPT_API_URL` 和 Telegram 里的公网地址也要改成新的端口
 
 常用参数：
 
@@ -230,6 +244,7 @@ python scripts/one_click_deploy.py --mode docker --with-telegram
 - `--skip-asr`：只安装 Web 依赖，不安装转写依赖，也不会预下载模型
 - `--skip-model-download`：保留 ASR 依赖安装，但跳过首次模型预热下载
 - 如果缺少 `ffmpeg`，一键部署会直接给出分平台安装提示，而不是继续盲跑
+- 如果默认 `4444` 端口被占用，可以加 `--port 5555` 之类的参数改成别的端口
 
 ## 安装
 
@@ -320,6 +335,8 @@ douyin-web --host 127.0.0.1 --port 4444
 ```text
 http://127.0.0.1:4444
 ```
+
+如果你自己改了端口，就把这里的 `4444` 换成你实际使用的端口。
 
 页面支持：
 
@@ -510,6 +527,12 @@ python scripts/install_openclaw_skill.py --force --mode local
 - 在当前项目的 `.env` 里写入：
   - `OPENCLAW_SHARED_TOKEN=<同一份自动生成的 token>`
 
+如果你的服务不是跑在 `4444`，就执行：
+
+```bash
+python scripts/install_openclaw_skill.py --force --mode local --api-url http://127.0.0.1:5555
+```
+
 这意味着：
 
 - 用户不需要自己生成 token
@@ -534,6 +557,12 @@ http://192.168.50.201:4444
 
 ```bash
 python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444
+```
+
+如果服务机改过端口，比如改成了 `5555`，这里也要一起改：
+
+```bash
+python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:5555
 ```
 
 脚本会自动：

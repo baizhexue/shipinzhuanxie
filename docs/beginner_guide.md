@@ -60,6 +60,20 @@ winget install Gyan.FFmpeg
 http://127.0.0.1:4444
 ```
 
+如果这里打不开，而且你怀疑 `4444` 已经被别的软件占用了，就改一个端口再重试。
+
+Windows 可以这样运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\one_click_deploy.ps1 --port 5555
+```
+
+改完以后打开：
+
+```text
+http://127.0.0.1:5555
+```
+
 ## macOS
 
 ### 第一步：安装 Python
@@ -98,6 +112,18 @@ bash ./scripts/one_click_deploy.sh
 http://127.0.0.1:4444
 ```
 
+如果 `4444` 被占用了，就改一个端口再运行：
+
+```bash
+bash ./scripts/one_click_deploy.sh --port 5555
+```
+
+然后打开：
+
+```text
+http://127.0.0.1:5555
+```
+
 ## Linux
 
 ### 第一步：确认 Python 版本
@@ -134,6 +160,18 @@ bash ./scripts/one_click_deploy.sh
 http://127.0.0.1:4444
 ```
 
+如果 `4444` 被占用了，就改一个端口再运行：
+
+```bash
+bash ./scripts/one_click_deploy.sh --port 5555
+```
+
+然后打开：
+
+```text
+http://127.0.0.1:5555
+```
+
 ## 网页打开后怎么用
 
 1. 把视频链接粘贴进去
@@ -153,6 +191,8 @@ http://127.0.0.1:4444
   - `python scripts/install_openclaw_skill.py --force --mode local`
 - 局域网另一台机器：
   - `python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444`
+
+如果你前面把服务端口改掉了，这里的地址也要跟着改。
 
 ### 也可以手动复制
 
@@ -178,6 +218,7 @@ skills/video-transcript-bridge
 2. ffmpeg 没装好
 3. 第一次下载模型时网络太慢
 4. 电脑没有联网
+5. 默认 `4444` 端口已经被别的软件占用了
 
 这时候最简单的处理方式是：
 
