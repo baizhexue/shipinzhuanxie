@@ -1,241 +1,15 @@
 # 视频转写助手
 
-这是一个给普通用户用的本地工具。
+一个轻量的 Python 项目，用来处理这条链路：
 
-你把这些平台的链接贴进来：
+`抖音 / Bilibili / 小红书 / 快手 / YouTube 分享文案或链接 -> 下载视频 -> 提取音频 -> 转成文字`
 
-- 抖音
-- Bilibili
-- 小红书
-- 快手
-- YouTube
+当前项目提供 4 个入口：
 
-它会帮你：
-
-1. 下载视频
-2. 提取音频
-3. 转成文字
-
-当前支持 4 个入口：
-
-- Web 页面
-- Telegram 机器人
-- OpenClaw 技能入口
 - CLI
-
-## ????
-
-??????????????????????
-
-????????
-
-1. ?? Python
-2. ?? ffmpeg
-3. ??????
-4. ???????
-
-???????????
-
-- [??????](docs/beginner_guide.md)
-
-????????????????????????????
-
-```text
-http://127.0.0.1:8000
-http://127.0.0.1:4444
-```
-
-## ????
-
-### Windows
-
-?????? Python
-
-1. ?????
-2. ?? `https://www.python.org/downloads/`
-3. ?? Python 3.9 ?????
-4. ????? `Add Python to PATH`
-
-?????? ffmpeg
-
-1. ?? Windows ?????? PowerShell
-2. ??????????
-
-```powershell
-winget install Gyan.FFmpeg
-```
-
-??????????
-
-???????????????????
-
-```text
-????.bat
-```
-
-????????????????????
-
-??????????
-
-???????????
-
-1. ????
-2. ????
-3. ??????
-4. ??????
-
-???????????
-
-??????????????????????
-
-```text
-http://127.0.0.1:8000
-http://127.0.0.1:4444
-```
-
-### macOS
-
-?????? Python
-
-1. ?????
-2. ?? `https://www.python.org/downloads/`
-3. ????? Python 3.9 ?????
-
-?????? ffmpeg
-
-???????? Homebrew????????????
-
-```bash
-brew install ffmpeg
-```
-
-??????????
-
-1. ??????
-2. ???????
-3. ???????
-
-```bash
-bash ./scripts/one_click_deploy.sh
-```
-
-????????????
-
-??????????????????????????
-
-???????????
-
-??????????????????????
-
-```text
-http://127.0.0.1:8000
-http://127.0.0.1:4444
-```
-
-### Linux
-
-?????? Python ??
-
-???????? Python 3.9 ??????
-
-?????? ffmpeg
-
-???? Ubuntu / Debian??????
-
-```bash
-sudo apt update && sudo apt install -y ffmpeg
-```
-
-??????????
-
-1. ????
-2. ???????
-3. ???????
-
-```bash
-bash ./scripts/one_click_deploy.sh
-```
-
-????????????
-
-??????????????????????????
-
-???????????
-
-??????????????????????
-
-```text
-http://127.0.0.1:8000
-http://127.0.0.1:4444
-```
-## OpenClaw 怎么接
-
-如果你还要给 OpenClaw 使用，有两种方式。
-
-### 方式 1：推荐
-
-直接运行安装脚本：
-
-- 同机部署：
-  - `python scripts/install_openclaw_skill.py --force --mode local`
-- 跨机器部署：
-  - `python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444`
-
-### 方式 2：手动复制
-
-你也可以自己复制 skill 文件夹：
-
-1. 从仓库里找到：
-   - `skills/video-transcript-bridge`
-2. 复制到：
-   - `~/.openclaw/workspace/skills/video-transcript-bridge`
-3. 再手动修改 `~/.openclaw/openclaw.json`
-
-需要自己填写：
-
-- `VIDEO_TRANSCRIPT_API_URL`
-- `VIDEO_TRANSCRIPT_API_TOKEN`
-
-## Telegram 怎么接
-
-如果你要用 Telegram：
-
-1. 先把主网页服务跑起来
-2. 再在网页的系统设置里配置 Telegram
-3. 或者手动运行：
-
-```bash
-python -m douyin_pipeline telegram-bot --token <your_bot_token>
-```
-
-## 一键部署到底会做什么
-
-一键部署负责拉起主服务。
-
-它会自动：
-
-1. 检查 Python
-2. 检查 `ffmpeg`
-3. 创建 `.venv`
-4. 安装依赖
-5. 预下载默认 Whisper 模型 `small`
-6. 启动 Web 服务
-
-如果你还要给 OpenClaw 使用，再额外执行一次 `scripts/install_openclaw_skill.py`。
-
-常用参数：
-
-```bash
-python scripts/one_click_deploy.py --mode local --skip-asr
-python scripts/one_click_deploy.py --mode local --skip-model-download
-python scripts/one_click_deploy.py --mode docker --with-telegram
-```
-
-说明：
-
-- `--skip-asr`：只安装 Web 依赖，不安装转写依赖，也不会预下载模型
-- `--skip-model-download`：保留 ASR 依赖安装，但跳过首次模型预热下载
-- 如果缺少 `ffmpeg`，一键部署会直接给出安装提示
+- 本地 Web 页面
+- Telegram 机器人
+- OpenClaw 局域网技能入口
 
 ## 功能
 
@@ -247,6 +21,152 @@ python scripts/one_click_deploy.py --mode docker --with-telegram
 - 用 `faster-whisper` 做语音转写
 - 转写结果默认归一化为简体中文，并补一层大陆常用词汇修正
 - 每个任务单独落盘，输出 `manifest.json` 供 Web 和 Telegram 展示状态
+
+## 先看这个
+
+如果你是第一次接触这类工具，不用先研究原理。
+
+你只需要照着做：
+
+1. 安装 Python
+2. 安装 ffmpeg
+3. 运行一键部署
+4. 打开网页开始用
+
+如果你想看更细的步骤：
+
+- [小白安装说明](docs/beginner_guide.md)
+
+安装完成后，把下面两个地址都试一下，哪个能打开就用哪个：
+
+```text
+http://127.0.0.1:8000
+http://127.0.0.1:4444
+```
+
+## 小白安装
+
+### Windows
+
+第一步：安装 Python
+
+1. 打开浏览器
+2. 访问 `https://www.python.org/downloads/`
+3. 下载 Python 3.9 或更高版本
+4. 安装时勾选 `Add Python to PATH`
+
+第二步：安装 ffmpeg
+
+1. 打开 Windows 的“终端”或 PowerShell
+2. 输入下面这句后回车：
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
+第三步：运行一键部署
+
+最简单的方式是直接双击项目根目录里的：
+
+```text
+一键部署.bat
+```
+
+如果你不会用命令行，双击这个文件就可以。
+
+第四步：等待自动安装
+
+它会自动帮你做这些事：
+
+1. 检查环境
+2. 安装依赖
+3. 下载转写模型
+4. 启动网页服务
+
+第五步：打开网页开始用
+
+把下面两个地址都试一下，哪个能打开就用哪个：
+
+```text
+http://127.0.0.1:8000
+http://127.0.0.1:4444
+```
+
+### macOS
+
+第一步：安装 Python
+
+1. 打开浏览器
+2. 访问 `https://www.python.org/downloads/`
+3. 下载并安装 Python 3.9 或更高版本
+
+第二步：安装 ffmpeg
+
+如果你已经安装了 Homebrew，就打开“终端”后输入：
+
+```bash
+brew install ffmpeg
+```
+
+第三步：运行一键部署
+
+1. 打开“终端”
+2. 进入项目文件夹
+3. 输入下面这句：
+
+```bash
+bash ./scripts/one_click_deploy.sh
+```
+
+第四步：等待自动安装完成
+
+它会自动帮你安装依赖、下载转写模型，并启动网页服务。
+
+第五步：打开网页开始用
+
+把下面两个地址都试一下，哪个能打开就用哪个：
+
+```text
+http://127.0.0.1:8000
+http://127.0.0.1:4444
+```
+
+### Linux
+
+第一步：确认 Python 版本
+
+确认机器里已经有 Python 3.9 或更高版本。
+
+第二步：安装 ffmpeg
+
+如果你是 Ubuntu / Debian，可以输入：
+
+```bash
+sudo apt update && sudo apt install -y ffmpeg
+```
+
+第三步：运行一键部署
+
+1. 打开终端
+2. 进入项目文件夹
+3. 输入下面这句：
+
+```bash
+bash ./scripts/one_click_deploy.sh
+```
+
+第四步：等待自动安装完成
+
+它会自动帮你安装依赖、下载转写模型，并启动网页服务。
+
+第五步：打开网页开始用
+
+把下面两个地址都试一下，哪个能打开就用哪个：
+
+```text
+http://127.0.0.1:8000
+http://127.0.0.1:4444
+```
 
 ## 边界
 
@@ -260,6 +180,62 @@ python scripts/one_click_deploy.py --mode docker --with-telegram
 - Python `>=3.9`
 - 本机可用的 `ffmpeg`
 - 本机可用的 `yt-dlp`
+
+## 一键部署
+
+仓库下载后，现在可以直接走一键部署。
+一键部署负责拉起主服务。
+如果你还要给 OpenClaw 使用，再额外执行一次 `scripts/install_openclaw_skill.py`。
+
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\one_click_deploy.ps1
+```
+
+或者直接双击仓库根目录的：
+
+```text
+一键部署.bat
+```
+
+macOS / Linux：
+
+```bash
+bash ./scripts/one_click_deploy.sh
+```
+
+自动模式会这样处理：
+
+- 如果本机可用 Docker，优先执行 `docker compose up --build -d web`
+- 如果没有 Docker，就自动创建 `.venv`、安装 `.[web,asr]`、生成 `.env`，然后启动本地 Web 服务
+- 本地模式会在启动前检查系统级依赖，例如 `ffmpeg`
+- 启用 ASR 时，本地模式会额外预下载默认 Whisper 模型 `small`
+
+默认访问地址：
+
+- Docker 模式：`http://127.0.0.1:4444`
+- 本地模式：`http://127.0.0.1:8000`
+
+补充：
+
+- OpenClaw 现在直接复用主服务端口，不再单独部署 `4455`
+- 同机部署时，OpenClaw 应该指向当前主服务地址
+- 局域网跨机器部署时，直接填写 Web 服务地址，例如 `http://192.168.50.201:4444`
+
+常用参数：
+
+```bash
+python scripts/one_click_deploy.py --mode local --skip-asr
+python scripts/one_click_deploy.py --mode local --skip-model-download
+python scripts/one_click_deploy.py --mode docker --with-telegram
+```
+
+说明：
+
+- `--skip-asr`：只安装 Web 依赖，不安装转写依赖，也不会预下载模型
+- `--skip-model-download`：保留 ASR 依赖安装，但跳过首次模型预热下载
+- 如果缺少 `ffmpeg`，一键部署会直接给出分平台安装提示，而不是继续盲跑
 
 ## 安装
 
@@ -506,7 +482,6 @@ GitHub Actions 会在 `main` 和 PR 上自动执行同样的基础检查。
 
 - OpenClaw 专用接口：`GET /api/openclaw/health`、`POST /api/openclaw/transcribe`
 - 技能目录：`skills/video-transcript-bridge`
-- 也支持手动安装：直接把这个目录复制到 `~/.openclaw/workspace/skills/video-transcript-bridge`
 - 安装脚本：
   - 同机部署：`python scripts/install_openclaw_skill.py --force --mode local`
   - 跨机器局域网：`python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444`
@@ -598,19 +573,3 @@ python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192
 - 加 `--force` 会覆盖旧的 skill 目录
 - `openclaw.json` 里的 `video-transcript-bridge` 配置会被更新
 - 已有 token 优先复用；没有时才自动生成新的
-
-#### 如果用户不想跑安装脚本
-
-也可以手动复制 skill：
-
-1. 从仓库里复制 `skills/video-transcript-bridge`
-2. 放到 `~/.openclaw/workspace/skills/video-transcript-bridge`
-3. 再手动修改 `~/.openclaw/openclaw.json` 里的：
-   - `VIDEO_TRANSCRIPT_API_URL`
-   - `VIDEO_TRANSCRIPT_API_TOKEN`
-
-说明：
-
-- 手动复制 skill 只解决“技能目录安装”这一步
-- `openclaw.json` 里的服务地址和 token 仍然要自己配置
-- 如果不想自己配 JSON，就继续用安装脚本
