@@ -34,6 +34,45 @@
 - 本机可用的 `ffmpeg`
 - 本机可用的 `yt-dlp`
 
+## 一键部署
+
+仓库下载后，现在可以直接走一键部署。
+
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\one_click_deploy.ps1
+```
+
+或者直接双击仓库根目录的：
+
+```text
+一键部署.bat
+```
+
+macOS / Linux：
+
+```bash
+bash ./scripts/one_click_deploy.sh
+```
+
+自动模式会这样处理：
+
+- 如果本机可用 Docker，优先执行 `docker compose up --build -d web`
+- 如果没有 Docker，就自动创建 `.venv`、安装 `.[web,asr]`、生成 `.env`，然后启动本地 Web 服务
+
+默认访问地址：
+
+- Docker 模式：`http://127.0.0.1:4444`
+- 本地模式：`http://127.0.0.1:8000`
+
+常用参数：
+
+```bash
+python scripts/one_click_deploy.py --mode local --skip-asr
+python scripts/one_click_deploy.py --mode docker --with-telegram
+```
+
 ## 安装
 
 基础安装：

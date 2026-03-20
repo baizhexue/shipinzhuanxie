@@ -24,7 +24,8 @@ $fileItems = @(
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "Dockerfile",
-    "docker-compose.yml"
+    "docker-compose.yml",
+    "一键部署.bat"
 )
 
 foreach ($item in $fileItems) {
