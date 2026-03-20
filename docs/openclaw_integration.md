@@ -47,6 +47,11 @@
 
 `~/.openclaw/workspace/skills/video-transcript-bridge`
 
+除了安装脚本，也可以手动复制：
+
+- 源目录：`skills/video-transcript-bridge`
+- 目标目录：`~/.openclaw/workspace/skills/video-transcript-bridge`
+
 ## OpenClaw 配置
 
 推荐直接运行安装脚本，而不是手工改配置。
@@ -108,6 +113,25 @@ python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192
 - `~/.openclaw/workspace/skills/video-transcript-bridge`
 - `~/.openclaw/openclaw.json`
 - 同机模式下还会修改当前项目根目录的 `.env`
+
+### 手动复制 skill 的方式
+
+如果你不想运行安装脚本，也可以自己复制 skill 目录。
+
+步骤：
+
+1. 把仓库中的 `skills/video-transcript-bridge` 复制到 `~/.openclaw/workspace/skills/video-transcript-bridge`
+2. 手动修改 `~/.openclaw/openclaw.json`
+3. 填好这两个环境变量：
+   - `VIDEO_TRANSCRIPT_API_URL`
+   - `VIDEO_TRANSCRIPT_API_TOKEN`
+4. 重启 OpenClaw
+
+注意：
+
+- 手动复制只会安装 skill 文件，不会自动生成 token
+- 也不会自动同步服务端 `.env`
+- 如果你想省掉这些手工步骤，优先使用安装脚本
 
 ### 用户视角的最小步骤
 
