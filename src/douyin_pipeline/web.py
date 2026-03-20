@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from threading import Thread
@@ -371,7 +371,7 @@ def create_app(settings: Optional[Settings] = None):
     return app
 
 
-def start_server(settings: Settings, *, host: str = "127.0.0.1", port: int = 8000) -> None:
+def start_server(settings: Settings, *, host: str = "127.0.0.1", port: int = 4444) -> None:
     try:
         import uvicorn
     except ImportError as exc:
@@ -385,7 +385,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Start the video transcription web UI.")
     parser.add_argument("--host", default="127.0.0.1", help="bind host")
-    parser.add_argument("--port", default=8000, type=int, help="bind port")
+    parser.add_argument("--port", default=4444, type=int, help="bind port")
     parser.add_argument("--out", default=None, help="output directory")
     parser.add_argument("--cookies", default=None, help="cookies.txt path")
     parser.add_argument("--model", default=None, help="whisper model name")

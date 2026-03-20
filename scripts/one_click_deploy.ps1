@@ -5,17 +5,17 @@ $scriptPath = Join-Path $PSScriptRoot "one_click_deploy.py"
 $venvPython = Join-Path $repoRoot ".venv\\Scripts\\python.exe"
 
 if (Test-Path $venvPython) {
-  & $venvPython $scriptPath --mode auto --host 127.0.0.1 --port 8000 @Args
+  & $venvPython $scriptPath --mode auto --host 127.0.0.1 --port 4444 @Args
   exit $LASTEXITCODE
 }
 
 if (Get-Command py -ErrorAction SilentlyContinue) {
-  & py -3 $scriptPath --mode auto --host 127.0.0.1 --port 8000 @Args
+  & py -3 $scriptPath --mode auto --host 127.0.0.1 --port 4444 @Args
   exit $LASTEXITCODE
 }
 
 if (Get-Command python -ErrorAction SilentlyContinue) {
-  & python $scriptPath --mode auto --host 127.0.0.1 --port 8000 @Args
+  & python $scriptPath --mode auto --host 127.0.0.1 --port 4444 @Args
   exit $LASTEXITCODE
 }
 

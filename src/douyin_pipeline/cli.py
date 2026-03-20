@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     web_parser = subparsers.add_parser("web", help="start local web ui")
     _add_runtime_args(web_parser)
     web_parser.add_argument("--host", default="127.0.0.1", help="bind host")
-    web_parser.add_argument("--port", default=8000, type=int, help="bind port")
+    web_parser.add_argument("--port", default=4444, type=int, help="bind port")
 
     telegram_parser = subparsers.add_parser("telegram-bot", help="start telegram bot long polling")
     _add_runtime_args(telegram_parser)

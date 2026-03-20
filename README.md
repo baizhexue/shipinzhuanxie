@@ -37,10 +37,9 @@
 
 - [小白安装说明](docs/beginner_guide.md)
 
-安装完成后，把下面两个地址都试一下，哪个能打开就用哪个：
+安装完成后，打开下面这个地址：
 
 ```text
-http://127.0.0.1:8000
 http://127.0.0.1:4444
 ```
 
@@ -85,10 +84,9 @@ winget install Gyan.FFmpeg
 
 第五步：打开网页开始用
 
-把下面两个地址都试一下，哪个能打开就用哪个：
+打开下面这个地址：
 
 ```text
-http://127.0.0.1:8000
 http://127.0.0.1:4444
 ```
 
@@ -124,10 +122,9 @@ bash ./scripts/one_click_deploy.sh
 
 第五步：打开网页开始用
 
-把下面两个地址都试一下，哪个能打开就用哪个：
+打开下面这个地址：
 
 ```text
-http://127.0.0.1:8000
 http://127.0.0.1:4444
 ```
 
@@ -161,10 +158,9 @@ bash ./scripts/one_click_deploy.sh
 
 第五步：打开网页开始用
 
-把下面两个地址都试一下，哪个能打开就用哪个：
+打开下面这个地址：
 
 ```text
-http://127.0.0.1:8000
 http://127.0.0.1:4444
 ```
 
@@ -214,12 +210,10 @@ bash ./scripts/one_click_deploy.sh
 
 默认访问地址：
 
-- Docker 模式：`http://127.0.0.1:4444`
-- 本地模式：`http://127.0.0.1:8000`
+- `http://127.0.0.1:4444`
 
 补充：
 
-- OpenClaw 现在直接复用主服务端口，不再单独部署 `4455`
 - 同机部署时，OpenClaw 应该指向当前主服务地址
 - 局域网跨机器部署时，直接填写 Web 服务地址，例如 `http://192.168.50.201:4444`
 
@@ -312,19 +306,19 @@ python -m douyin_pipeline transcribe output\job-20260308-120000-123456\video.mp4
 启动本地网页：
 
 ```bash
-python -m douyin_pipeline web --host 127.0.0.1 --port 8000
+python -m douyin_pipeline web --host 127.0.0.1 --port 4444
 ```
 
 或：
 
 ```bash
-douyin-web --host 127.0.0.1 --port 8000
+douyin-web --host 127.0.0.1 --port 4444
 ```
 
 打开：
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:4444
 ```
 
 页面支持：
@@ -511,8 +505,7 @@ python scripts/install_openclaw_skill.py --force --mode local
 
 - 把 skill 安装到 `~/.openclaw/workspace/skills/video-transcript-bridge`
 - 在 `~/.openclaw/openclaw.json` 写入：
-  - Docker 模式：`VIDEO_TRANSCRIPT_API_URL=http://127.0.0.1:4444`
-  - 本地模式：`VIDEO_TRANSCRIPT_API_URL=http://127.0.0.1:8000`
+  - `VIDEO_TRANSCRIPT_API_URL=http://127.0.0.1:4444`
   - 自动生成的 `VIDEO_TRANSCRIPT_API_TOKEN`
 - 在当前项目的 `.env` 里写入：
   - `OPENCLAW_SHARED_TOKEN=<同一份自动生成的 token>`

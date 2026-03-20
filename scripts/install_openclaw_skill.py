@@ -9,8 +9,8 @@ from typing import Any
 
 
 DEFAULT_SKILL_NAME = "video-transcript-bridge"
-DEFAULT_LOCAL_API_URL = "http://127.0.0.1:4455"
-DEFAULT_LAN_API_URL = "http://192.168.50.201:4455"
+DEFAULT_LOCAL_API_URL = "http://127.0.0.1:4444"
+DEFAULT_LAN_API_URL = "http://192.168.50.201:4444"
 
 
 def main() -> int:

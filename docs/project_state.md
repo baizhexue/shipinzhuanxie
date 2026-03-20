@@ -42,23 +42,19 @@
 
 主要目录：
 
-- 主 Web 服务目录：`/Users/baizhexue/dev/xiangmu`
-- OpenClaw 专用服务目录：`/Users/baizhexue/dev/video-transcript-openclaw-service`
+- 主服务目录：`/Users/baizhexue/dev/xiangmu`
 
 主要端口：
 
-- Web 页面：`4444`
-- OpenClaw 专用接口：`4455`
+- Web 页面与 OpenClaw 接口：`4444`
 
 主要服务：
 
 - `http://192.168.50.201:4444`
-- `http://192.168.50.201:4455`
 
 launchd 服务：
 
 - `com.baizhexue.douyin-web`
-- `com.baizhexue.video-transcript-openclaw-service`
 
 ### 2. OpenClaw 机器
 
@@ -117,7 +113,7 @@ python scripts/install_openclaw_skill.py --force --mode local
 跨机器部署：
 
 ```bash
-python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455
+python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4444
 ```
 
 ## 当前已经完成
