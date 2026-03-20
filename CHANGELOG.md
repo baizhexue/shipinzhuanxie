@@ -1,245 +1,205 @@
 # 更新日志
 
+本项目使用中文维护版本迭代记录，按“功能新增 / 修复 / 优化”归档。
+
+## [0.9.3] - 2026-03-20
+
+### 功能新增
+
+- 为重构后的模块补齐独立测试，新增 `downloader_runtime`、`web_jobs`、`telegram_messages` 的 focused tests。
+
+### 修复
+
+- 修复 `telegram_messages.py` 的文案文件编码污染问题，恢复为干净的 UTF-8 中文文案。
+- 修复重构过程中对系统 Python 误用导致的假性回归判断，统一以项目 `.venv` 作为验证环境。
+
+### 优化
+
+- 拆分 `web.py` 的辅助逻辑与任务服务层，新增 `web_support.py`、`web_jobs.py`。
+- 拆分 `pipeline.py` 的 manifest 构建与回写逻辑，新增 `pipeline_manifest.py`。
+- 拆分下载器的平台回退分发与 YouTube runtime 探测逻辑，新增 `downloader_fallbacks.py`、`downloader_runtime.py`。
+- 拆分 Telegram 消息拼装逻辑，新增 `telegram_messages.py`，并清理 `telegram_bot.py` 中已无必要的兼容转发 helper。
+- 本轮重构后，本地回归测试提升到 `84` 项，并已同步验证远端 `4444 / 4455` 两套服务。
+
 ## [0.9.2] - 2026-03-20
 
 ### 功能新增
 
 - 新增跨平台一键部署脚本：`scripts/one_click_deploy.py`、`scripts/one_click_deploy.ps1`、`scripts/one_click_deploy.sh`。
-- 新增 Windows 仓库根目录双击入口：`一键部署.bat`。
+- 新增 Windows 双击入口：`一键部署.bat`。
 
 ### 修复
 
-- 修复用户下载仓库后仍需要手动创建虚拟环境、复制 `.env`、逐条安装依赖的问题；现在一条命令即可完成初始化和启动。
-- 修复 Docker 入口镜像版本号长期停留在旧版本的问题，`docker-compose.yml` 已跟随当前版本更新。
+- 修复用户下载仓库后仍需手动创建虚拟环境、复制 `.env`、逐条安装依赖的问题。
+- 修复 Docker 入口版本号长期停留在旧版本的问题，`docker-compose.yml` 已跟随当前版本同步。
 
 ### 优化
 
-- 一键部署模式会自动优先检测 Docker；没有 Docker 时再回退到本地 `.venv + pip` 安装，降低首次上手门槛。
-- README 补充一键部署说明、默认访问地址和常用参数，减少新用户第一次部署时的判断成本。
-- OpenClaw 技能源码目录调整为 `skills/video-transcript-bridge`，并统一建议安装到 `~/.openclaw/workspace/skills/`，和工作区技能结构保持一致。
+- 一键部署优先探测 Docker；没有 Docker 时自动回退到 `.venv + pip` 本地安装。
+- README 补充一键部署说明、默认访问地址和常用参数。
+- OpenClaw 技能源码目录统一为 `skills/video-transcript-bridge`，并建议安装到 `~/.openclaw/workspace/skills/`。
 
 ## [0.9.1] - 2026-03-12
 
 ### 功能新增
 
-- 任务对外返回新增 `status_note` 字段，网页会直接解释当前状态、超时兜底和抖音下载回退逻辑。
+- 任务对外返回新增 `status_note` 字段，网页会直接解释当前状态、超时兜底和抖音浏览器回退逻辑。
 
 ### 修复
 
-- 修复长时间卡在 `queued`、`downloading`、`transcribing` 的任务无法自动收口的问题；服务启动后和运行期间都会定期把超时任务标记为失败。
-- 修复卡住任务一直占据历史记录、用户误以为仍在运行的问题，历史接口现在会先清理超时任务再返回结果。
+- 修复长时间卡在 `queued`、`downloading`、`transcribing` 的任务无法自动收口的问题。
+- 修复卡住任务持续占据历史记录、用户误以为仍在运行的问题。
 
 ### 优化
 
-- 任务中心和历史记录卡片新增状态提示文案，详情页同步展示状态提示，排查下载卡住或转写等待时不再只看技术字段。
+- 任务中心与历史记录卡片新增状态提示文案，详情页同步展示状态解释。
 - 补充 Web 接口回归测试，覆盖超时任务自动清理场景。
 
 ## [0.9.0] - 2026-03-12
 
 ### 功能新增
 
-- 新增 OpenClaw 专用局域网接口：`GET /api/openclaw/health` 和 `POST /api/openclaw/transcribe`，支持同步返回完整转写稿。
+- 新增 OpenClaw 专用局域网接口：`GET /api/openclaw/health`、`POST /api/openclaw/transcribe`。
 - 新增 OpenClaw 技能目录 `skills/video-transcript-bridge`，包含 `SKILL.md`、helper 脚本和配置示例。
-- 新增任务全文接口 `GET /api/jobs/{job_id}/transcript`，方便后续系统直接取完整文本。
-- 新增 `scripts/install_openclaw_skill.py`，用于把技能目录安装到 `~/.openclaw/skills/`。
+- 新增全文接口 `GET /api/jobs/{job_id}/transcript`，方便 OpenClaw 和其他系统读取完整转写稿。
+- 新增 `scripts/install_openclaw_skill.py`，支持自动安装技能并写入配置。
 
 ### 修复
 
-- 收口跨机器调用的鉴权方式，避免局域网内匿名直接调用转写接口。
-- 补齐 `Settings` 和测试用例里的新配置字段，避免新增 OpenClaw 配置后本地测试失效。
+- 修复跨机器调用时的鉴权边界问题，统一走共享 token。
+- 补齐 `Settings` 和测试用例中的 OpenClaw 配置字段，避免新增能力后本地测试失效。
 
 ### 优化
 
-- 梳理 OpenClaw 场景的产品边界：网页继续承担人工操作入口，OpenClaw 改走专用同步桥接接口，职责更清晰。
-- 补充 `docs/openclaw_integration.md` 和 `.env.example`，把局域网部署和技能安装路径固定下来。
-本项目使用中文维护版本迭代记录，按功能新增、修复、优化归档。
+- 梳理 OpenClaw 场景的产品边界：网页继续承担人工入口，OpenClaw 走同步桥接接口。
+- 补充 `docs/openclaw_integration.md` 和 `.env.example`，固化局域网部署方式。
 
 ## [0.8.2] - 2026-03-09
 
 ### 功能新增
 
-- `doctor` 现在不仅检查 YouTube JS runtime，还会确认当前 `yt-dlp` 是否支持 `--js-runtimes`，避免旧版依赖被误判为可用。
+- `doctor` 新增 YouTube JS runtime 能力校验，避免旧版 `yt-dlp` 被误判为可用。
 
 ### 修复
 
-- 修复旧版 `yt-dlp` 不支持 `--js-runtimes` 时，YouTube 下载器直接报参数错误的问题；现在检测到 Deno 时会自动切到兼容模式。
-- 修复 Python 3.9 环境无法安装新版 `yt-dlp` 的约束冲突，继续保持远端部署可用。
-- 修复 macOS 部署优先命中虚拟环境旧版 `yt-dlp` 的问题，配置现在会优先发现官方独立二进制。
+- 修复旧版 `yt-dlp` 不支持 `--js-runtimes` 时 YouTube 下载直接报参数错误的问题。
+- 修复 Python 3.9 环境下远端无法直接升级新版 `yt-dlp` 的兼容性问题。
+- 修复 macOS 部署优先命中旧版虚拟环境 `yt-dlp` 的问题。
 
 ### 优化
 
-- 补充旧版 `yt-dlp`、PATH 外 Deno、`doctor` 检查等 YouTube 回归测试。
+- 补充 YouTube runtime 探测与 `doctor` 相关回归测试。
 
 ## [0.8.1] - 2026-03-09
 
 ### 功能新增
 
-- `doctor` 新增 `youtube_js_runtime` 检查项，明确提示当前环境是否具备 YouTube 稳定下载所需的 JS runtime。
+- `doctor` 新增 `youtube_js_runtime` 检查项。
 
 ### 修复
 
-- 修复 YouTube 在部分 macOS 环境中因 `node` / `deno` 不在 PATH 而无法被 `yt-dlp` 发现的问题，下载器现在会补查常见安装路径并显式传递给 `--js-runtimes`。
-- 修复远端服务 `doctor` 全绿但 YouTube 仍会失败的假阳性问题。
+- 修复 `node` / `deno` 不在 PATH 时 `yt-dlp` 无法发现 JS runtime 的问题。
+- 修复远端 `doctor` 假绿但 YouTube 仍会失败的问题。
 
 ### 优化
 
-- 补充 YouTube JS runtime 探测与 `doctor` 的回归测试，覆盖 PATH 外安装的 Deno 场景。
+- 补充 PATH 外安装 Deno 的检测回归测试。
 
 ## [0.8.0] - 2026-03-09
 
 ### 功能新增
 
-- 正式加入 YouTube 视频下载与转写支持，CLI、Web、Telegram 三个入口统一支持 `watch` 长视频链接、`shorts` 短视频链接和 `youtu.be` 短链。
-- 多平台来源识别补充 YouTube，任务详情和历史列表会直接显示 YouTube 来源。
-- 补充 YouTube 长视频与 Shorts 的解析测试，覆盖平台识别的核心回归场景。
+- 正式加入 YouTube 下载与转写支持，覆盖 `watch`、`shorts` 和 `youtu.be` 链接。
+- 平台识别补充 YouTube，任务历史和详情可直接看到来源平台。
 
 ### 修复
 
-- 修复用户输入提示、错误提示、帮助文案里未把 YouTube 纳入支持范围的问题。
-- 顺手清理 README、CHANGELOG 和错误分类里的编码脏数据，避免后续版本继续在乱码文本上迭代。
+- 修复网页提示、错误提示和帮助文案里未把 YouTube 纳入支持范围的问题。
 
 ### 优化
 
-- 保持现有 `yt-dlp -> ffmpeg -> whisper` 链路不分叉，YouTube 复用现有下载和转写管线，不额外引入站点专用下载器。
-- 同步更新 CLI 描述、首页文案、Telegram 帮助文案、Web API 标题和开源文档，使多平台表述一致。
+- 统一 CLI、首页、Telegram、README 对多平台支持的表述。
 
 ## [0.7.0] - 2026-03-09
 
 ### 功能新增
 
-- 正式加入快手视频下载支持，CLI、Web、Telegram 三个入口统一支持快手短链和分享链接。
-- 新增快手页面级解析器，可直接从分享页内嵌的 `INIT_STATE` 中提取视频直链和标题。
-- 多平台来源识别补充快手，任务详情和历史列表会直接显示快手来源。
+- 正式加入快手视频下载与转写支持。
+- 新增快手页面级解析器，可从分享页 `INIT_STATE` 中提取视频直链和标题。
 
 ### 修复
 
-- 兼容 `yt-dlp` 对当前快手短链提取失败的场景，下载器会自动切到快手页面回退逻辑。
-- 增加快手“非视频分享”“页面 payload 缺失”“视频直链缺失”等结构化错误提示。
-- 补齐快手解析器、下载回退和错误分类测试，避免后续回归。
+- 修复 `yt-dlp` 当前无法稳定处理部分快手短链时的下载失败问题。
+- 补充快手“非视频”“直链缺失”等结构化错误提示。
 
 ### 优化
 
-- README、首页输入文案、Telegram 帮助文案、CLI 帮助文本同步纳入快手来源说明。
-- 快手页面解析保持无额外依赖，不引入浏览器自动化，继续维持项目轻量化。
+- README、首页、Telegram、CLI 文案同步纳入快手来源说明。
 
 ## [0.6.0] - 2026-03-09
 
 ### 功能新增
 
-- 正式加入小红书视频下载与转写支持，CLI、Web、Telegram 三个入口统一支持小红书分享链接和 `xhslink` 短链。
-- 下载失败时新增小红书页面级回退解析器，可直接从笔记页提取 `og:video` 或页面内嵌视频地址继续下载。
-- 任务记录新增来源平台字段，历史任务和详情页可以直接看到抖音、Bilibili、小红书来源。
+- 正式加入小红书视频下载与转写支持。
+- 下载失败时新增小红书页面级回退解析器，可直接从页面提取视频地址。
+- 任务记录新增来源平台字段。
 
 ### 修复
 
-- 去掉 `yt-dlp` 的 `--restrict-filenames`，修复中文标题视频落盘后被压成下划线的问题。
-- 增加小红书访问验证和视频地址缺失的结构化错误提示，失败原因更容易定位。
-- 补齐小红书分享文案、短链解析和下载回退测试，避免后续回归。
+- 去掉 `yt-dlp` 的 `--restrict-filenames`，修复中文标题落盘后被压成下划线的问题。
+- 补充小红书访问验证和视频地址缺失的结构化错误提示。
 
 ### 优化
 
-- 首页输入文案、Telegram 帮助文案、CLI 帮助文本同步纳入小红书来源说明。
-- README 补充小红书示例命令和使用说明。
-- 保持现有下载与转写管线不分叉，小红书支持以最小增量接入现有架构。
+- 首页、Telegram、CLI、README 同步纳入小红书来源说明。
 
 ## [0.5.0] - 2026-03-09
 
 ### 功能新增
 
-- 加入 Bilibili 视频下载与转写支持，CLI、Web 和 Telegram 入口统一支持 Bilibili 视频链接。
-- 下载器新增 `ffmpeg` 合并能力，支持处理 Bilibili 分离的视频流和音频流。
-- 转写器新增 `device=auto` 下的 CUDA 失败自动回退到 CPU。
+- 加入 Bilibili 下载与转写支持。
+- 下载器新增 `ffmpeg` 合并能力，支持处理 Bilibili 的分离音视频流。
+- 转写器新增 `device=auto` 下 CUDA 失败自动回退 CPU。
 
 ### 修复
 
-- 修复 Bilibili 下载后只落地分离流、但仍被误判为成功的问题。
-- 修复 `device=auto` 遇到 CUDA 运行时缺失时直接失败的问题，改为自动回退到 CPU 继续转写。
-- 补充下载器和转写器的测试用例，覆盖 Bilibili 的关键回归场景。
+- 修复 Bilibili 只落地分离流但仍被误判成功的问题。
+- 修复 CUDA 运行时缺失时直接失败的问题。
 
 ### 优化
 
-- 更新错误分类与用户提示，明确区分 Bilibili 合并失败等问题。
-- 文档说明补齐了 Bilibili 的 CLI、Web、Telegram 用法。
-- 调整 CLI 描述和 README 首页介绍，统一多平台支持表述。
+- 更新错误分类和用户提示，区分 Bilibili 合并失败等问题。
 
 ## [0.4.1] - 2026-03-09
 
 ### 功能新增
 
-- Telegram 用户提示进一步中文化，包含任务接收、处理中、完成和失败消息。
-- 更新版本记录维护方式，后续迭代统一使用中文 changelog。
+- Telegram 用户提示进一步中文化。
+- 版本记录统一切换为中文 changelog 维护方式。
 
 ### 修复
 
-- 修复部分 Telegram 文案和文件标签仍然显示英文的问题。
+- 修复 Telegram 部分文案和文件标签仍为英文的问题。
 - 修复版本元数据中的 BOM 兼容问题，避免远端重新安装失败。
 
 ### 优化
 
-- 收敛 Telegram 面向用户的表达风格，减少技术味提示。
-- 调整版本发布后的文档同步策略。
+- 收敛 Telegram 面向用户的提示风格。
 
 ## [0.4.0] - 2026-03-09
 
 ### 功能新增
 
-- Web 页面拆成任务中心、历史记录、系统设置三个工作区。
+- Web 页面拆分为任务中心、历史记录、系统设置三块工作区。
 - 新增历史任务分页、搜索、筛选、删除能力。
 - Telegram 支持处理中阶段的任务进度回推。
-- Telegram 配置可直接在网页里托管和修改。
+- Telegram 配置可直接在网页中托管和修改。
 
 ### 修复
 
-- 解决历史任务过多时首页挤压、最近任务无法承载完整记录的问题。
-- 修复 Telegram 独立进程管理和网页配置脱节的问题。
-- 修复任务删除和轮询状态之间的边界处理。
+- 解决历史任务过多时首页拥挤、最近任务无法承载完整记录的问题。
+- 修复 Telegram 独立进程管理与网页配置脱节的问题。
 
 ### 优化
 
-- 重构信息架构，继续保持单页轻量实现而不是引入重前端框架。
-- 统一任务状态和 Telegram 运行时配置的持久化方式。
-- 收紧默认机器人成本和可维护性边界。
-
-## [0.3.0] - 2026-03-09
-
-### 功能新增
-
-- 加入 Docker 部署文件：`Dockerfile`、`docker-compose.yml` 和 `.dockerignore`。
-- 加入 GitHub Issue 模板和 Pull Request 模板。
-- 错误返回新增结构化分类与用户提示。
-- 补充开源项目治理文件。
-
-### 修复
-
-- Web API 返回结构增加 `error_code` 和 `error_hint`。
-- Web 页面可以显示更友好的错误提示和技术细节。
-- Telegram 错误通知同步带上建议操作。
-- 调整 Docker 导出目录和忽略规则。
-
-### 优化
-
-- 远端部署同步吃到新的错误分类逻辑。
-- 文档收口为可开源、可部署、可协作的形式。
-
-## [0.2.0] - 2026-03-09
-
-### 功能新增
-
-- 加入 GitHub Actions CI 和基础自动化测试。
-- 支持 `v*` 标签触发 GitHub Release 发布。
-- 加入 `CONTRIBUTING.md` 和 `CHANGELOG.md`。
-- 补充 Web API 和 Telegram 的基础测试。
-
-### 修复
-
-- 转写结果增加简体中文归一化和大陆常用词汇修正。
-- 统一 `0.2.0` 版本号和发布资产。
-- 修复 FastAPI 返回版本号和包版本不一致的问题。
-
-## [0.1.0] - 2026-03-09
-
-### 功能新增
-
-- 完成 CLI、Web 和 Telegram 三个入口的基础版本。
-- 支持抖音视频下载和转写。
-- 使用 `manifest.json` 作为轻量任务状态存储。
+- 信息架构从单页堆叠改为轻量工作台，更适合长期使用。
