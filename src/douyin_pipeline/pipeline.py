@@ -8,8 +8,14 @@ from typing import Any, Callable, Literal, Optional
 from douyin_pipeline.config import Settings
 from douyin_pipeline.downloader import DownloadResult, create_job_dir, download_video
 from douyin_pipeline.errors import UserFacingError, classify_exception
-from douyin_pipeline.jobs import read_manifest, relative_to, write_manifest
-from douyin_pipeline.parser import detect_source_platform, extract_share_url
+from douyin_pipeline.jobs import read_manifest, write_manifest
+from douyin_pipeline.parser import extract_share_url
+from douyin_pipeline.pipeline_manifest import (
+    build_manifest,
+    infer_processed_seconds,
+    merge_existing_manifest,
+    write_manifest_with_callback,
+)
 from douyin_pipeline.transcriber import TranscriptResult, transcribe_video
 
 
@@ -95,7 +101,7 @@ def transcribe_existing_job(
                 status_callback=status_callback,
             ),
         )
-        updated_manifest = _merge_existing_manifest(
+        updated_manifest = merge_existing_manifest(
             manifest,
             settings=settings,
             status="success",
@@ -106,14 +112,14 @@ def transcribe_existing_job(
             phase="completed",
             progress_percent=100.0,
             eta_seconds=0.0,
-            processed_seconds=_infer_processed_seconds(transcript_result),
-            duration_seconds=_infer_processed_seconds(transcript_result),
+            processed_seconds=infer_processed_seconds(transcript_result),
+            duration_seconds=infer_processed_seconds(transcript_result),
         )
-        _write_manifest_with_callback(job_dir, updated_manifest, status_callback)
+        write_manifest_with_callback(job_dir, updated_manifest, status_callback)
         return updated_manifest
     except Exception as exc:
         error_info = classify_exception(exc)
-        updated_manifest = _merge_existing_manifest(
+        updated_manifest = merge_existing_manifest(
             manifest,
             settings=settings,
             status="error",
@@ -127,7 +133,7 @@ def transcribe_existing_job(
             processed_seconds=None,
             duration_seconds=None,
         )
-        _write_manifest_with_callback(job_dir, updated_manifest, status_callback)
+        write_manifest_with_callback(job_dir, updated_manifest, status_callback)
         raise
 
 
@@ -146,7 +152,7 @@ def prepare_job(raw_input: str, settings: Settings, action: JobAction) -> Prepar
 
     write_manifest(
         prepared_job.job_dir,
-        _build_manifest(
+        build_manifest(
             settings=settings,
             prepared_job=prepared_job,
             status="queued",
@@ -236,7 +242,7 @@ def run_prepared_job(
                 ),
             )
 
-        manifest = _build_manifest(
+        manifest = build_manifest(
             settings=settings,
             prepared_job=prepared_job,
             status="success",
@@ -248,14 +254,14 @@ def run_prepared_job(
             phase="completed",
             progress_percent=100.0,
             eta_seconds=0.0,
-            processed_seconds=_infer_processed_seconds(transcript_result),
-            duration_seconds=_infer_processed_seconds(transcript_result),
+            processed_seconds=infer_processed_seconds(transcript_result),
+            duration_seconds=infer_processed_seconds(transcript_result),
         )
-        _write_manifest_with_callback(prepared_job.job_dir, manifest, status_callback)
+        write_manifest_with_callback(prepared_job.job_dir, manifest, status_callback)
         return manifest
     except Exception as exc:
         error_info = classify_exception(exc)
-        manifest = _build_manifest(
+        manifest = build_manifest(
             settings=settings,
             prepared_job=prepared_job,
             status="error",
@@ -270,7 +276,7 @@ def run_prepared_job(
             processed_seconds=None,
             duration_seconds=None,
         )
-        _write_manifest_with_callback(prepared_job.job_dir, manifest, status_callback)
+        write_manifest_with_callback(prepared_job.job_dir, manifest, status_callback)
         raise
 
 
@@ -291,7 +297,7 @@ def _write_status(
     duration_seconds: Optional[float],
     status_callback: StatusCallback,
 ) -> None:
-    payload = _build_manifest(
+    payload = build_manifest(
         settings=settings,
         prepared_job=prepared_job,
         status=status,
@@ -306,56 +312,7 @@ def _write_status(
         processed_seconds=processed_seconds,
         duration_seconds=duration_seconds,
     )
-    _write_manifest_with_callback(prepared_job.job_dir, payload, status_callback)
-
-
-def _build_manifest(
-    *,
-    settings: Settings,
-    prepared_job: PreparedJob,
-    status: str,
-    detail: str,
-    download_result: Optional[DownloadResult],
-    transcript_result: Optional[TranscriptResult],
-    error: Optional[str],
-    error_info: Optional[UserFacingError],
-    phase: Optional[str],
-    progress_percent: Optional[float],
-    eta_seconds: Optional[float],
-    processed_seconds: Optional[float],
-    duration_seconds: Optional[float],
-) -> dict[str, Any]:
-    video_path = download_result.video_path if download_result else None
-    audio_path = _resolve_audio_path(download_result, transcript_result)
-    transcript_path = _resolve_transcript_path(download_result, transcript_result)
-    transcript_text = (
-        transcript_result.text
-        if transcript_result
-        else _load_transcript_preview(prepared_job.job_dir)
-    )
-
-    return {
-        "job_id": prepared_job.job_dir.name,
-        "job_dir": prepared_job.job_dir.name,
-        "created_at": prepared_job.created_at,
-        "action": prepared_job.action,
-        "status": status,
-        "detail": detail,
-        "raw_input": prepared_job.raw_input,
-        "source_url": prepared_job.source_url,
-        "source_platform": detect_source_platform(prepared_job.source_url),
-        "title": download_result.title if download_result else None,
-        "video_path": relative_to(settings.output_dir, video_path),
-        "audio_path": relative_to(settings.output_dir, audio_path),
-        "transcript_path": relative_to(settings.output_dir, transcript_path),
-        "transcript_preview": _truncate_text(transcript_text),
-        **_build_error_fields(error=error, error_info=error_info),
-        "phase": phase,
-        "progress_percent": progress_percent,
-        "eta_seconds": eta_seconds,
-        "processed_seconds": processed_seconds,
-        "duration_seconds": duration_seconds,
-    }
+    write_manifest_with_callback(prepared_job.job_dir, payload, status_callback)
 
 
 def _write_existing_status(
@@ -374,7 +331,7 @@ def _write_existing_status(
     duration_seconds: Optional[float],
     status_callback: StatusCallback,
 ) -> None:
-    payload = _merge_existing_manifest(
+    payload = merge_existing_manifest(
         manifest,
         settings=settings,
         status=status,
@@ -388,130 +345,7 @@ def _write_existing_status(
         processed_seconds=processed_seconds,
         duration_seconds=duration_seconds,
     )
-    _write_manifest_with_callback(job_dir, payload, status_callback)
-
-
-def _merge_existing_manifest(
-    manifest: dict[str, Any],
-    *,
-    settings: Settings,
-    status: str,
-    detail: str,
-    transcript_result: Optional[TranscriptResult],
-    error: Optional[str],
-    error_info: Optional[UserFacingError],
-    phase: Optional[str],
-    progress_percent: Optional[float],
-    eta_seconds: Optional[float],
-    processed_seconds: Optional[float],
-    duration_seconds: Optional[float],
-) -> dict[str, Any]:
-    updated = dict(manifest)
-    updated["status"] = status
-    updated["detail"] = detail
-    updated.update(_build_error_fields(error=error, error_info=error_info))
-    updated["phase"] = phase
-    updated["progress_percent"] = progress_percent
-    updated["eta_seconds"] = eta_seconds
-    updated["processed_seconds"] = processed_seconds
-    updated["duration_seconds"] = duration_seconds
-
-    if transcript_result:
-        updated["audio_path"] = relative_to(settings.output_dir, transcript_result.audio_path)
-        updated["transcript_path"] = relative_to(settings.output_dir, transcript_result.transcript_path)
-        updated["transcript_preview"] = _truncate_text(transcript_result.text)
-    else:
-        audio_rel = updated.get("audio_path")
-        transcript_rel = updated.get("transcript_path")
-        if not transcript_rel:
-            updated["transcript_preview"] = ""
-
-        if audio_rel:
-            audio_path = settings.output_dir / str(audio_rel)
-            if not audio_path.exists():
-                updated["audio_path"] = None
-
-        if transcript_rel:
-            transcript_path = settings.output_dir / str(transcript_rel)
-            if transcript_path.exists():
-                updated["transcript_preview"] = _truncate_text(
-                    transcript_path.read_text(encoding="utf-8")
-                )
-            else:
-                updated["transcript_path"] = None
-                updated["transcript_preview"] = ""
-
-    return updated
-
-
-def _resolve_audio_path(
-    download_result: Optional[DownloadResult],
-    transcript_result: Optional[TranscriptResult],
-) -> Optional[Path]:
-    if transcript_result:
-        return transcript_result.audio_path
-
-    if not download_result:
-        return None
-
-    candidate = download_result.video_path.with_suffix(".wav")
-    return candidate if candidate.exists() else None
-
-
-def _build_error_fields(
-    *,
-    error: Optional[str],
-    error_info: Optional[UserFacingError],
-) -> dict[str, Optional[str]]:
-    if error_info is None:
-        return {
-            "error": error,
-            "error_code": None,
-            "error_kind": None,
-            "error_hint": None,
-            "technical_error": None,
-        }
-
-    return {
-        "error": error_info.message,
-        "error_code": error_info.code,
-        "error_kind": error_info.kind,
-        "error_hint": error_info.hint,
-        "technical_error": error_info.technical_detail,
-    }
-
-
-def _resolve_transcript_path(
-    download_result: Optional[DownloadResult],
-    transcript_result: Optional[TranscriptResult],
-) -> Optional[Path]:
-    if transcript_result:
-        return transcript_result.transcript_path
-
-    if not download_result:
-        return None
-
-    candidate = download_result.video_path.with_suffix(".txt")
-    return candidate if candidate.exists() else None
-
-
-def _load_transcript_preview(job_dir: Path) -> str:
-    transcript_files = sorted(job_dir.glob("*.txt"))
-    if not transcript_files:
-        return ""
-    return transcript_files[0].read_text(encoding="utf-8")
-
-
-def _truncate_text(value: str, limit: int = 800) -> str:
-    if len(value) <= limit:
-        return value
-    return value[:limit].rstrip() + "..."
-
-
-def _infer_processed_seconds(transcript_result: Optional[TranscriptResult]) -> Optional[float]:
-    if transcript_result is None:
-        return None
-    return transcript_result.duration_seconds
+    write_manifest_with_callback(job_dir, payload, status_callback)
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -524,13 +358,3 @@ def _as_text(value: Any) -> Optional[str]:
     if value is None or value == "":
         return None
     return str(value)
-
-
-def _write_manifest_with_callback(
-    job_dir: Path,
-    payload: dict[str, Any],
-    status_callback: StatusCallback,
-) -> None:
-    write_manifest(job_dir, payload)
-    if status_callback is not None:
-        status_callback(dict(payload))
