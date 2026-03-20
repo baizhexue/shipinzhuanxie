@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DOCKER_PORT = 4444
+DEFAULT_WHISPER_MODEL = "small"
 
 
 def main() -> int:
@@ -32,6 +34,11 @@ def main() -> int:
         "--skip-browser-install",
         action="store_true",
         help="skip `playwright install chromium` during local deployment",
+    )
+    parser.add_argument(
+        "--skip-model-download",
+        action="store_true",
+        help="skip Whisper model warmup download in local mode",
     )
     parser.add_argument(
         "--with-telegram",
@@ -60,6 +67,7 @@ def main() -> int:
         port=args.port,
         with_asr=not args.skip_asr,
         install_browser=not args.skip_browser_install,
+        warmup_model=not args.skip_asr and not args.skip_model_download,
     )
     return 0
 
@@ -81,6 +89,7 @@ def _deploy_locally(
     port: int,
     with_asr: bool,
     install_browser: bool,
+    warmup_model: bool,
 ) -> None:
     python_command = _discover_python()
     venv_dir = repo_root / ".venv"
@@ -91,15 +100,24 @@ def _deploy_locally(
     _run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=repo_root)
 
     extras = "web,asr" if with_asr else "web"
-    _run([str(venv_python), "-m", "pip", "install", f"-e", f".[{extras}]"], cwd=repo_root)
+    _run([str(venv_python), "-m", "pip", "install", "-e", f".[{extras}]"], cwd=repo_root)
 
     if install_browser:
         _run([str(venv_python), "-m", "playwright", "install", "chromium"], cwd=repo_root)
 
+    _ensure_local_system_dependencies()
+
     doctor_args = [str(venv_python), "-m", "douyin_pipeline.cli", "doctor"]
     if not with_asr:
         doctor_args.append("--skip-asr")
-    _run(doctor_args, cwd=repo_root)
+    try:
+        _run(doctor_args, cwd=repo_root)
+    except subprocess.CalledProcessError as exc:
+        _print_doctor_failure_help()
+        raise RuntimeError("Environment checks failed. Install the missing dependencies and rerun one-click deploy.") from exc
+
+    if warmup_model:
+        _warmup_whisper_model(venv_python, repo_root)
 
     _print_success("local", host=host, port=port)
     _run(
@@ -166,6 +184,90 @@ def _docker_available() -> bool:
     except OSError:
         return False
     return compose.returncode == 0 and info.returncode == 0
+
+
+def _ensure_local_system_dependencies() -> None:
+    missing = []
+    if not _command_available("ffmpeg"):
+        missing.append("ffmpeg")
+
+    if not missing:
+        return
+
+    print("")
+    print("=" * 72)
+    print("检测到缺少系统级依赖。")
+    for item in missing:
+        print(f"- 缺少: {item}")
+        for hint in _install_hints(item):
+            print(f"  {hint}")
+    print("=" * 72)
+    print("")
+    raise RuntimeError("Missing required system dependencies.")
+
+
+def _command_available(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def _install_hints(name: str) -> list[str]:
+    system = platform.system().lower()
+    hints: list[str] = []
+
+    if name == "ffmpeg":
+        if system == "windows":
+            hints.extend(
+                [
+                    "Windows: `winget install Gyan.FFmpeg`",
+                    "Windows: 安装完成后确认 ffmpeg 已加入 PATH",
+                ]
+            )
+        elif system == "darwin":
+            hints.append("macOS: `brew install ffmpeg`")
+        else:
+            hints.extend(
+                [
+                    "Ubuntu/Debian: `sudo apt update && sudo apt install -y ffmpeg`",
+                    "CentOS/RHEL: 先启用 EPEL 或 RPM Fusion，再安装 ffmpeg",
+                ]
+            )
+
+    return hints
+
+
+def _warmup_whisper_model(venv_python: Path, repo_root: Path) -> None:
+    print("")
+    print("=" * 72)
+    print(f"开始预下载 Whisper 模型：{DEFAULT_WHISPER_MODEL}")
+    print("这一步只在本地模式且启用 ASR 时执行一次。")
+    print("=" * 72)
+    print("")
+    command = [
+        str(venv_python),
+        "-c",
+        (
+            "from faster_whisper import WhisperModel; "
+            f"WhisperModel('{DEFAULT_WHISPER_MODEL}', device='cpu'); "
+            "print('Whisper model warmup complete.')"
+        ),
+    ]
+    _run(command, cwd=repo_root)
+
+
+def _print_doctor_failure_help() -> None:
+    print("")
+    print("=" * 72)
+    print("环境自检没有通过。")
+    print("常见原因：")
+    print("- ffmpeg 还没有安装，或不在 PATH")
+    print("- 你选择了 ASR，但 faster-whisper 相关依赖还没装好")
+    print("- 当前机器缺少 YouTube 稳定下载所需的 node / deno 运行时")
+    print("")
+    print("建议：")
+    print("- 先按上面的系统依赖提示安装 ffmpeg")
+    print("- 再手动执行 `python -m douyin_pipeline doctor` 看具体失败项")
+    print("=" * 72)
+    print("")
 
 
 def _print_success(mode: str, *, host: str, port: int) -> None:

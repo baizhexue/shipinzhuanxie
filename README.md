@@ -63,6 +63,8 @@ bash ./scripts/one_click_deploy.sh
 
 - 如果本机可用 Docker，优先执行 `docker compose up --build -d web`
 - 如果没有 Docker，就自动创建 `.venv`、安装 `.[web,asr]`、生成 `.env`，然后启动本地 Web 服务
+- 本地模式会在启动前检查系统级依赖，例如 `ffmpeg`
+- 启用 ASR 时，本地模式会额外预下载默认 Whisper 模型 `small`
 
 默认访问地址：
 
@@ -79,8 +81,15 @@ bash ./scripts/one_click_deploy.sh
 
 ```bash
 python scripts/one_click_deploy.py --mode local --skip-asr
+python scripts/one_click_deploy.py --mode local --skip-model-download
 python scripts/one_click_deploy.py --mode docker --with-telegram
 ```
+
+说明：
+
+- `--skip-asr`：只安装 Web 依赖，不安装转写依赖，也不会预下载模型
+- `--skip-model-download`：保留 ASR 依赖安装，但跳过首次模型预热下载
+- 如果缺少 `ffmpeg`，一键部署会直接给出分平台安装提示，而不是继续盲跑
 
 ## 安装
 
