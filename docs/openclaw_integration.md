@@ -41,22 +41,93 @@
 
 仓库内技能源码目录：
 
-`openclaw_skill/video-transcript-bridge`
+`skills/video-transcript-bridge`
 
 标准安装目录：
 
-`~/.openclaw/skills/video-transcript-bridge`
+`~/.openclaw/workspace/skills/video-transcript-bridge`
 
 ## OpenClaw 配置
 
-把 `openclaw_skill/video-transcript-bridge/openclaw.config.example.json` 里的 `env` 合并到：
+推荐直接运行安装脚本，而不是手工改配置。
 
-`~/.openclaw/openclaw.json`
+### 同机部署
 
-至少要配置：
+适用条件：
 
-- `VIDEO_TRANSCRIPT_API_URL`
-- `VIDEO_TRANSCRIPT_API_TOKEN`
+- OpenClaw 和视频转写服务在同一台机器上
+- 服务本机监听 `127.0.0.1:4455`
+
+执行：
+
+```bash
+python scripts/install_openclaw_skill.py --force --mode local
+```
+
+脚本会自动完成：
+
+- 安装 skill 到 `~/.openclaw/workspace/skills/video-transcript-bridge`
+- 把 `VIDEO_TRANSCRIPT_API_URL` 写成 `http://127.0.0.1:4455`
+- 自动生成 `VIDEO_TRANSCRIPT_API_TOKEN`
+- 把同一份 token 同步写进当前项目 `.env` 的 `OPENCLAW_SHARED_TOKEN`
+
+这一步完成后，OpenClaw 和服务端已经共享同一份密钥，不需要用户手工生成 token。
+
+### 跨机器局域网部署
+
+适用条件：
+
+- OpenClaw 在机器 A
+- 视频转写服务在机器 B
+- 例如服务地址是 `http://192.168.50.201:4455`
+
+执行：
+
+```bash
+python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455
+```
+
+脚本会自动完成：
+
+- 复制技能到 `~/.openclaw/workspace/skills/video-transcript-bridge`
+- 写入 `~/.openclaw/openclaw.json`
+- 自动生成 `VIDEO_TRANSCRIPT_API_TOKEN`
+
+需要额外注意：
+
+- `lan` 模式不会自动修改远端服务机上的 `.env`
+- 你需要把生成出来的 token 同步到服务机的 `OPENCLAW_SHARED_TOKEN`
+- 服务端和 OpenClaw 端只要保持同一份 token 即可正常通信
+
+### 脚本修改范围
+
+安装脚本会修改这些位置：
+
+- `~/.openclaw/workspace/skills/video-transcript-bridge`
+- `~/.openclaw/openclaw.json`
+- 同机模式下还会修改当前项目根目录的 `.env`
+
+### 用户视角的最小步骤
+
+同机部署：
+
+1. 启动视频转写服务
+2. 执行 `python scripts/install_openclaw_skill.py --force --mode local`
+3. 重启 OpenClaw
+
+跨机器部署：
+
+1. 确认服务端已经运行
+2. 在 OpenClaw 机器执行 `python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455`
+3. 把生成的 token 同步到服务端 `.env`
+4. 重启 OpenClaw
+
+### 失败排查
+
+- `401 Unauthorized`：两端 token 不一致
+- `request failed`：`VIDEO_TRANSCRIPT_API_URL` 地址不通
+- Skill 没生效：确认目录在 `~/.openclaw/workspace/skills/video-transcript-bridge`
+- OpenClaw 仍读旧配置：重启 OpenClaw 后再试
 
 ## 安全边界
 

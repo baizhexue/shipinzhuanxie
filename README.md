@@ -316,7 +316,94 @@ GitHub Actions 会在 `main` 和 PR 上自动执行同样的基础检查。
 ## OpenClaw 局域网技能
 
 - OpenClaw 专用接口：`GET /api/openclaw/health`、`POST /api/openclaw/transcribe`
-- 技能目录：`openclaw_skill/video-transcript-bridge`
-- 安装脚本：`python scripts/install_openclaw_skill.py --force`
+- 技能目录：`skills/video-transcript-bridge`
+- 安装脚本：
+  - 同机部署：`python scripts/install_openclaw_skill.py --force --mode local`
+  - 跨机器局域网：`python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455`
 - 接入说明：`docs/openclaw_integration.md`
-- 需要配置环境变量：`VIDEO_TRANSCRIPT_API_URL`、`VIDEO_TRANSCRIPT_API_TOKEN`、`OPENCLAW_SHARED_TOKEN`
+- 安装脚本会自动：
+  - 复制技能到 `~/.openclaw/workspace/skills/video-transcript-bridge`
+  - 写入 `~/.openclaw/openclaw.json`
+  - 自动生成 `VIDEO_TRANSCRIPT_API_TOKEN`
+  - 在同机模式下同步写入服务端 `.env` 里的 `OPENCLAW_SHARED_TOKEN`
+
+### 使用说明
+
+#### 场景 1：OpenClaw 和视频转写服务装在同一台机器
+
+适用条件：
+
+- OpenClaw 和本项目都安装在同一台机器
+- OpenClaw 直接调用本机视频转写服务
+
+启动服务后执行：
+
+```bash
+python scripts/install_openclaw_skill.py --force --mode local
+```
+
+脚本会自动做这些事：
+
+- 把 skill 安装到 `~/.openclaw/workspace/skills/video-transcript-bridge`
+- 在 `~/.openclaw/openclaw.json` 写入：
+  - `VIDEO_TRANSCRIPT_API_URL=http://127.0.0.1:4455`
+  - 自动生成的 `VIDEO_TRANSCRIPT_API_TOKEN`
+- 在当前项目的 `.env` 里写入：
+  - `OPENCLAW_SHARED_TOKEN=<同一份自动生成的 token>`
+
+这意味着：
+
+- 用户不需要自己生成 token
+- 用户不需要自己改 `openclaw.json`
+- 用户不需要自己抄服务端密钥
+
+#### 场景 2：OpenClaw 和视频转写服务在不同机器上
+
+适用条件：
+
+- OpenClaw 在一台机器
+- 视频转写服务在另一台机器
+- 两台机器都在同一个局域网里
+
+例如服务端是：
+
+```text
+http://192.168.50.201:4455
+```
+
+在 OpenClaw 那台机器执行：
+
+```bash
+python scripts/install_openclaw_skill.py --force --mode lan --api-url http://192.168.50.201:4455
+```
+
+脚本会自动：
+
+- 安装 skill 到 `~/.openclaw/workspace/skills/video-transcript-bridge`
+- 把服务地址写进 `~/.openclaw/openclaw.json`
+- 自动生成 `VIDEO_TRANSCRIPT_API_TOKEN`
+
+注意：
+
+- `lan` 模式下，脚本不会自动去改远程服务机上的 `.env`
+- 你需要把脚本生成的这份 token 同步到服务端的 `OPENCLAW_SHARED_TOKEN`
+- 同步一次即可，后面重复使用
+
+#### 脚本实际会修改哪些文件
+
+- `~/.openclaw/workspace/skills/video-transcript-bridge`
+- `~/.openclaw/openclaw.json`
+- 同机模式下还会修改当前项目根目录的 `.env`
+
+#### 用户安装完成后怎么验证
+
+1. 先确认视频转写服务正在运行
+2. 重启 OpenClaw，或者让 OpenClaw 重新加载技能
+3. 给 OpenClaw 一条支持平台的视频链接
+4. 它应该会调用这个 skill，并拿回 `transcript_text`
+
+#### 如果安装脚本重复执行
+
+- 加 `--force` 会覆盖旧的 skill 目录
+- `openclaw.json` 里的 `video-transcript-bridge` 配置会被更新
+- 已有 token 优先复用；没有时才自动生成新的

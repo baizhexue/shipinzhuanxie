@@ -16,6 +16,7 @@
 
 - 一键部署模式会自动优先检测 Docker；没有 Docker 时再回退到本地 `.venv + pip` 安装，降低首次上手门槛。
 - README 补充一键部署说明、默认访问地址和常用参数，减少新用户第一次部署时的判断成本。
+- OpenClaw 技能源码目录调整为 `skills/video-transcript-bridge`，并统一建议安装到 `~/.openclaw/workspace/skills/`，和工作区技能结构保持一致。
 
 ## [0.9.1] - 2026-03-12
 
@@ -38,7 +39,7 @@
 ### 功能新增
 
 - 新增 OpenClaw 专用局域网接口：`GET /api/openclaw/health` 和 `POST /api/openclaw/transcribe`，支持同步返回完整转写稿。
-- 新增 OpenClaw 技能目录 `openclaw_skill/video-transcript-bridge`，包含 `SKILL.md`、helper 脚本和配置示例。
+- 新增 OpenClaw 技能目录 `skills/video-transcript-bridge`，包含 `SKILL.md`、helper 脚本和配置示例。
 - 新增任务全文接口 `GET /api/jobs/{job_id}/transcript`，方便后续系统直接取完整文本。
 - 新增 `scripts/install_openclaw_skill.py`，用于把技能目录安装到 `~/.openclaw/skills/`。
 

@@ -13,3 +13,7 @@
 - OpenClaw 所在机器能访问 `VIDEO_TRANSCRIPT_API_URL`
 - OpenClaw 所在机器有 `python3` 或 `python`
 - 目标转写服务已经部署并配置 `OPENCLAW_SHARED_TOKEN`
+
+## 建议安装位置
+
+- `~/.openclaw/workspace/skills/video-transcript-bridge`

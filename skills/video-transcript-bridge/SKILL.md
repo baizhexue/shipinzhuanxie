@@ -40,7 +40,7 @@ tmp_file="$(mktemp)"
 cat > "$tmp_file" <<'EOF'
 <把原始链接或完整分享文案原样放这里>
 EOF
-python3 "$HOME/.openclaw/skills/video-transcript-bridge/client.py" --input-file "$tmp_file"
+python3 "$HOME/.openclaw/workspace/skills/video-transcript-bridge/client.py" --input-file "$tmp_file"
 rm -f "$tmp_file"
 ```
 
@@ -51,7 +51,7 @@ $tmpFile = New-TemporaryFile
 Set-Content -Path $tmpFile -Value @'
 <把原始链接或完整分享文案原样放这里>
 '@ -Encoding UTF8
-python "$env:USERPROFILE\\.openclaw\\skills\\video-transcript-bridge\\client.py" --input-file $tmpFile
+python "$env:USERPROFILE\\.openclaw\\workspace\\skills\\video-transcript-bridge\\client.py" --input-file $tmpFile
 Remove-Item $tmpFile -Force
 ```
 
