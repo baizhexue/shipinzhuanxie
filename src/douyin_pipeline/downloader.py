@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 from pathlib import Path
 import json
 import re
@@ -40,6 +41,7 @@ AUDIO_SUFFIXES = {
 ADAPTIVE_STREAM_PATTERN = re.compile(r"\.f\d+$")
 YTDLP_DOWNLOAD_TIMEOUT_SECONDS = 180
 YTDLP_HELP_TIMEOUT_SECONDS = 8
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -64,12 +66,21 @@ def download_video(
     job_dir: Optional[Path] = None,
 ) -> DownloadResult:
     job_dir = job_dir or create_job_dir(settings.output_dir)
+    platform = detect_source_platform(source_url)
+    logger.info("download attempt platform=%s source_url=%s job_id=%s", platform, source_url, job_dir.name)
     try:
         return _download_with_ytdlp(source_url, settings, job_dir)
     except RuntimeError as exc:
         fallback = resolve_download_fallback(source_url, exc)
         if fallback is not None:
+            logger.warning(
+                "download fallback triggered platform=%s job_id=%s reason=%s",
+                platform,
+                job_dir.name,
+                exc,
+            )
             return fallback(source_url, job_dir)
+        logger.exception("download failed without fallback platform=%s job_id=%s", platform, job_dir.name)
         raise
 
 
@@ -122,6 +133,7 @@ def _download_with_ytdlp(
             env=process_env,
         )
     except subprocess.TimeoutExpired as exc:
+        logger.warning("yt-dlp timed out platform=%s job_id=%s timeout=%ss", platform, job_dir.name, YTDLP_DOWNLOAD_TIMEOUT_SECONDS)
         raise RuntimeError(
             "Video download failed.\n"
             f"command: {' '.join(command)}\n"
@@ -129,6 +141,7 @@ def _download_with_ytdlp(
         ) from exc
 
     if completed.returncode != 0:
+        logger.warning("yt-dlp exited non-zero platform=%s job_id=%s returncode=%s", platform, job_dir.name, completed.returncode)
         raise RuntimeError(
             "Video download failed.\n"
             f"command: {' '.join(command)}\n"

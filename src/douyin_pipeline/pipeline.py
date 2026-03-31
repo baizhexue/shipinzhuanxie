@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
@@ -21,6 +22,7 @@ from douyin_pipeline.transcriber import TranscriptResult, transcribe_video
 
 JobAction = Literal["download", "run"]
 StatusCallback = Optional[Callable[[dict[str, Any]], None]]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,13 @@ def prepare_job(raw_input: str, settings: Settings, action: JobAction) -> Prepar
         job_dir=create_job_dir(settings.output_dir),
     )
 
+    logger.info(
+        "prepared job job_id=%s action=%s source_url=%s",
+        prepared_job.job_dir.name,
+        action,
+        source_url,
+    )
+
     write_manifest(
         prepared_job.job_dir,
         build_manifest(
@@ -180,6 +189,13 @@ def run_prepared_job(
     download_result: Optional[DownloadResult] = None
     transcript_result: Optional[TranscriptResult] = None
 
+    logger.info(
+        "job started job_id=%s action=%s source_url=%s",
+        prepared_job.job_dir.name,
+        prepared_job.action,
+        prepared_job.source_url,
+    )
+
     _write_status(
         settings=settings,
         prepared_job=prepared_job,
@@ -202,6 +218,11 @@ def run_prepared_job(
             prepared_job.source_url,
             settings,
             job_dir=prepared_job.job_dir,
+        )
+        logger.info(
+            "download finished job_id=%s video_path=%s",
+            prepared_job.job_dir.name,
+            download_result.video_path,
         )
 
         if prepared_job.action == "run":
@@ -241,6 +262,11 @@ def run_prepared_job(
                     status_callback=status_callback,
                 ),
             )
+            logger.info(
+                "transcription finished job_id=%s transcript_path=%s",
+                prepared_job.job_dir.name,
+                transcript_result.transcript_path,
+            )
 
         manifest = build_manifest(
             settings=settings,
@@ -258,6 +284,7 @@ def run_prepared_job(
             duration_seconds=infer_processed_seconds(transcript_result),
         )
         write_manifest_with_callback(prepared_job.job_dir, manifest, status_callback)
+        logger.info("job completed job_id=%s", prepared_job.job_dir.name)
         return manifest
     except Exception as exc:
         error_info = classify_exception(exc)
@@ -277,6 +304,7 @@ def run_prepared_job(
             duration_seconds=None,
         )
         write_manifest_with_callback(prepared_job.job_dir, manifest, status_callback)
+        logger.exception("job failed job_id=%s error_code=%s", prepared_job.job_dir.name, error_info.code)
         raise
 
 

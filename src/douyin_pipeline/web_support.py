@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import replace
+import logging
 from pathlib import Path
 from threading import Thread
 from typing import Any, Optional
@@ -15,20 +16,23 @@ from douyin_pipeline.telegram_manager import TelegramManager
 
 
 STALE_SWEEP_INTERVAL_SECONDS = 30.0
+logger = logging.getLogger(__name__)
 
 
 def create_lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(app):
-        sweep_stale_jobs(settings.output_dir)
+        stale_count = sweep_stale_jobs(settings.output_dir)
         manager = TelegramManager(settings)
         app.state.telegram_manager = manager
         app.state.last_stale_sweep_monotonic = time.monotonic()
+        logger.info("web lifespan startup output_dir=%s stale_jobs_swept=%s", settings.output_dir, stale_count)
         manager.ensure_started_from_saved()
         try:
             yield
         finally:
             manager.stop()
+            logger.info("web lifespan shutdown")
 
     return lifespan
 
@@ -117,8 +121,10 @@ async def maybe_sweep_stale_jobs(app, run_in_threadpool, *, force: bool = False)
     if not force and (now - last_sweep) < STALE_SWEEP_INTERVAL_SECONDS:
         return
 
-    await run_in_threadpool(sweep_stale_jobs, app.state.settings.output_dir)
+    swept = await run_in_threadpool(sweep_stale_jobs, app.state.settings.output_dir)
     app.state.last_stale_sweep_monotonic = now
+    if swept:
+        logger.warning("swept stale jobs count=%s", swept)
 
 
 def run_job_in_background(prepared_job, settings: Settings) -> None:
@@ -151,11 +157,11 @@ def _run_job_target(prepared_job, settings: Settings) -> None:
     try:
         run_prepared_job(prepared_job, settings)
     except Exception:
-        return
+        logger.exception("background job failed job_id=%s", prepared_job.job_dir.name)
 
 
 def _run_transcribe_target(job_dir: Path, settings: Settings) -> None:
     try:
         transcribe_existing_job(job_dir, settings)
     except Exception:
-        return
+        logger.exception("background transcribe failed job_id=%s", job_dir.name)

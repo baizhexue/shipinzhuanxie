@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from threading import Thread
 from time import monotonic, sleep
@@ -14,6 +15,7 @@ import urllib.request
 from douyin_pipeline.config import Settings
 from douyin_pipeline.errors import classify_exception
 from douyin_pipeline.jobs import read_manifest, to_public_job
+from douyin_pipeline.logging_utils import configure_logging
 from douyin_pipeline.parser import extract_share_url
 from douyin_pipeline.pipeline import prepare_job, run_prepared_job
 from douyin_pipeline.telegram_messages import (
@@ -37,6 +39,7 @@ from douyin_pipeline.telegram_messages import (
 DEFAULT_ALLOWED_UPDATES = ("message",)
 DEFAULT_POLL_TIMEOUT = 25
 DEFAULT_RETRY_DELAY = 3.0
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,7 @@ def load_telegram_settings(
 
 
 def start_bot(app_settings: Settings, bot_settings: TelegramBotSettings) -> None:
+    configure_logging(app_settings.output_dir, service_name="telegram")
     client = TelegramBotClient(bot_settings)
     runner = TelegramBotRunner(app_settings, bot_settings, client)
     runner.run_forever()
@@ -176,9 +180,10 @@ class TelegramBotRunner:
     def run_forever(self) -> None:
         self._client.delete_webhook()
         bot_profile = self._client.get_me()
-        print(
-            f"telegram bot ready: @{bot_profile.get('username', 'unknown')} "
-            f"(allowed_chats={self._bot_settings.allowed_chat_ids or 'all'})"
+        logger.info(
+            "telegram bot ready username=%s allowed_chats=%s",
+            bot_profile.get("username", "unknown"),
+            self._bot_settings.allowed_chat_ids or "all",
         )
 
         while not self._stop_requested:
@@ -194,7 +199,7 @@ class TelegramBotRunner:
             except Exception as exc:
                 if self._stop_requested:
                     break
-                print(f"telegram bot poll error: {exc}")
+                logger.warning("telegram bot poll error: %s", exc)
                 sleep(self._bot_settings.retry_delay)
 
     def _handle_updates(self, updates: list[dict[str, Any]]) -> None:
@@ -216,7 +221,7 @@ class TelegramBotRunner:
         text = _extract_message_text(message)
 
         if self._bot_settings.allowed_chat_ids and chat_id not in self._bot_settings.allowed_chat_ids:
-            print(f"telegram bot ignored unauthorized chat_id={chat_id}")
+            logger.info("telegram bot ignored unauthorized chat_id=%s", chat_id)
             return
 
         if not text:
@@ -249,10 +254,12 @@ class TelegramBotRunner:
         thread.start()
 
     def _process_message_job(self, chat_id: int, raw_input: str) -> None:
+        logger.info("telegram bot received job chat_id=%s", chat_id)
         try:
             prepared_job = prepare_job(raw_input, self._app_settings, action="run")
         except Exception as exc:
             error_info = classify_exception(exc)
+            logger.exception("telegram bot failed to prepare job chat_id=%s", chat_id)
             self._client.send_message(chat_id, build_failure_text(error_info.message, error_info.hint))
             return
 
@@ -270,6 +277,7 @@ class TelegramBotRunner:
                 status_callback=progress_reporter.handle_manifest,
             )
         except Exception as exc:
+            logger.exception("telegram bot job failed chat_id=%s job_id=%s", chat_id, prepared_job.job_dir.name)
             failed_manifest = read_manifest(prepared_job.job_dir) or {
                 "job_id": prepared_job.job_dir.name,
                 "error": str(exc),
@@ -277,6 +285,7 @@ class TelegramBotRunner:
             self._send_failure(chat_id, failed_manifest)
             return
 
+        logger.info("telegram bot job completed chat_id=%s job_id=%s", chat_id, prepared_job.job_dir.name)
         self._send_success(chat_id, manifest)
 
     def _send_failure(self, chat_id: int, manifest: dict[str, Any]) -> None:

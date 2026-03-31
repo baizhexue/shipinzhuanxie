@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from threading import Thread
 from typing import Any, Optional
@@ -20,6 +21,7 @@ from douyin_pipeline.jobs import (
     read_transcript_text,
     to_public_job,
 )
+from douyin_pipeline.logging_utils import configure_logging
 from douyin_pipeline.openclaw_api import (
     build_openclaw_health_payload,
     build_openclaw_transcript_payload,
@@ -52,6 +54,7 @@ from douyin_pipeline.web_support import (
 ASSET_DIR = Path(__file__).with_name("web_assets")
 STATIC_DIR = ASSET_DIR / "static"
 INDEX_FILE = ASSET_DIR / "index.html"
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Optional[Settings] = None):
@@ -377,6 +380,8 @@ def start_server(settings: Settings, *, host: str = "127.0.0.1", port: int = 444
     except ImportError as exc:
         raise RuntimeError("Web server requires `pip install -e .[web]`.") from exc
 
+    log_file = configure_logging(settings.output_dir, service_name="web")
+    logger.info("starting web server host=%s port=%s output_dir=%s log_file=%s", host, port, settings.output_dir, log_file)
     uvicorn.run(create_app(settings), host=host, port=port)
 
 

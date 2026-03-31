@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from threading import RLock, Thread
 from typing import Optional
 
@@ -17,6 +18,8 @@ from douyin_pipeline.telegram_bot import (
     TelegramBotSettings,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class TelegramManager:
     def __init__(self, app_settings: Settings) -> None:
@@ -30,7 +33,12 @@ class TelegramManager:
     def ensure_started_from_saved(self) -> None:
         config = load_telegram_web_config(self._app_settings.output_dir)
         if config.enabled and config.token:
-            self.start(config)
+            try:
+                self.start(config)
+            except Exception as exc:
+                with self._lock:
+                    self._last_error = str(exc)
+                logger.exception("telegram auto-start failed")
 
     def get_public_state(self) -> dict:
         with self._lock:
@@ -79,6 +87,7 @@ class TelegramManager:
             self._runner = runner
             self._thread = thread
             thread.start()
+            logger.info("telegram manager started username=%s", self._bot_username or "unknown")
         return self.get_public_state()
 
     def stop(self) -> dict:
@@ -97,6 +106,7 @@ class TelegramManager:
             if runner is not None:
                 timeout_seconds = min(max(float(runner._bot_settings.poll_timeout) + 2.0, 2.0), 20.0)
             thread.join(timeout=timeout_seconds)
+        logger.info("telegram manager stopped")
         return self.get_public_state()
 
     def _run_runner(self, runner: TelegramBotRunner) -> None:
@@ -105,6 +115,7 @@ class TelegramManager:
         except Exception as exc:
             with self._lock:
                 self._last_error = str(exc)
+            logger.exception("telegram runner crashed")
         finally:
             with self._lock:
                 if self._runner is runner:
