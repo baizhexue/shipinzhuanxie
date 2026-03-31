@@ -22,7 +22,7 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="invalid_input",
             kind="input",
             message="没有识别到可用链接。",
-            hint="请粘贴完整分享文案，或者直接粘贴抖音、Bilibili、小红书、快手、YouTube 的视频链接。",
+            hint="请粘贴完整分享文案，或直接粘贴抖音、Bilibili、小红书、快手、YouTube 的视频链接。",
             technical_detail=detail,
         )
 
@@ -35,12 +35,48 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             technical_detail=detail,
         )
 
+    if "browser fallback could not fetch douyin detail json" in lowered:
+        return _error(
+            code="douyin_browser_detail_missing",
+            kind="download",
+            message="浏览器回退没有从抖音页面里拿到完整详情数据。",
+            hint="这通常是页面结构或接口策略变化导致。现在程序会优先尝试从页面里提取直链；如果仍失败，请稍后重试或更换公开可访问的视频链接。",
+            technical_detail=detail,
+        )
+
+    if "unable to resolve douyin video id" in lowered:
+        return _error(
+            code="douyin_video_id_missing",
+            kind="download",
+            message="浏览器回退没有解析出抖音视频 ID。",
+            hint="确认分享链接仍可访问，必要时重新复制完整分享文案后再试。",
+            technical_detail=detail,
+        )
+
+    if "detail json did not contain a playable video url" in lowered:
+        return _error(
+            code="douyin_play_url_missing",
+            kind="download",
+            message="抖音详情数据里没有可播放的视频地址。",
+            hint="这通常是站点限制或视频状态变化导致，稍后重试或换一条链接验证。",
+            technical_detail=detail,
+        )
+
     if "xiaohongshu page requires verification" in lowered:
         return _error(
             code="xiaohongshu_verification_required",
             kind="auth",
             message="小红书当前要求先完成访问验证，暂时不能直接下载这条视频。",
-            hint="先在浏览器里打开这条小红书笔记并确认能正常播放，再回到工具里重试；如果持续触发验证，建议稍后再试。",
+            hint="先在浏览器里打开这条小红书笔记并确认能正常播放，再回到工具里重试。",
+            technical_detail=detail,
+        )
+
+    if "xiaohongshu page did not expose a playable video url" in lowered:
+        return _error(
+            code="xiaohongshu_video_url_missing",
+            kind="download",
+            message="小红书页面里没有解析到可播放的视频地址。",
+            hint="确认这是一条视频笔记而不是图文笔记，并检查分享链接是否仍然有效。",
             technical_detail=detail,
         )
 
@@ -50,6 +86,24 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             kind="input",
             message="这条快手分享不是视频内容，当前不能进入转写链路。",
             hint="请改用快手视频分享链接；如果后面要支持图集下载，可以单独再加。",
+            technical_detail=detail,
+        )
+
+    if "kuaishou page did not expose init_state" in lowered or "kuaishou page did not expose a share payload" in lowered:
+        return _error(
+            code="kuaishou_payload_missing",
+            kind="download",
+            message="快手页面里没有解析到可用的分享数据。",
+            hint="这通常是页面结构变化或站点限制导致，可以稍后重试，或换一条公开可访问的快手视频链接验证。",
+            technical_detail=detail,
+        )
+
+    if "kuaishou page did not expose a playable video url" in lowered:
+        return _error(
+            code="kuaishou_video_url_missing",
+            kind="download",
+            message="快手页面里没有解析到可播放的视频地址。",
+            hint="确认这条分享仍然可播放，并且确实是视频而不是图集或其他内容。",
             technical_detail=detail,
         )
 
@@ -87,7 +141,7 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             code="download_failed",
             kind="download",
             message="视频下载失败。",
-            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 等分离流视频需要 ffmpeg，小红书触发验证、快手页面结构变化，或 YouTube 链接受限时也会导致下载失败。",
+            hint="确认链接有效、网络正常；抖音受限链接可能需要浏览器 cookies，Bilibili 或 YouTube 分离流视频需要 ffmpeg，小红书或快手页面结构变化也会导致下载失败。",
             technical_detail=detail,
         )
 
@@ -100,57 +154,12 @@ def classify_exception(exc: BaseException) -> UserFacingError:
             technical_detail=detail,
         )
 
-    if "xiaohongshu page did not expose a playable video url" in lowered:
-        return _error(
-            code="xiaohongshu_video_url_missing",
-            kind="download",
-            message="小红书页面里没有解析到可播放的视频地址。",
-            hint="确认这是一条视频笔记而不是图文笔记，并检查分享链接是否仍然有效。",
-            technical_detail=detail,
-        )
-
-    if "kuaishou page did not expose init_state" in lowered or "kuaishou page did not expose a share payload" in lowered:
-        return _error(
-            code="kuaishou_payload_missing",
-            kind="download",
-            message="快手页面里没有解析到可用的分享数据。",
-            hint="这通常是页面结构变化或站点限制导致，可以稍后重试，或者换一条公开可访问的快手视频链接验证。",
-            technical_detail=detail,
-        )
-
-    if "kuaishou page did not expose a playable video url" in lowered:
-        return _error(
-            code="kuaishou_video_url_missing",
-            kind="download",
-            message="快手页面里没有解析到可播放的视频地址。",
-            hint="确认这条分享仍然可播放，并且确实是视频而不是图集或其他内容。",
-            technical_detail=detail,
-        )
-
     if "no video file was found" in lowered:
         return _error(
             code="download_output_missing",
             kind="download",
             message="下载命令执行完成，但没有找到视频文件。",
             hint="检查下载目录权限，或查看 yt-dlp 输出是否被站点限制。",
-            technical_detail=detail,
-        )
-
-    if "unable to resolve douyin video id" in lowered:
-        return _error(
-            code="douyin_video_id_missing",
-            kind="download",
-            message="浏览器回退没有解析出抖音视频 ID。",
-            hint="确认分享链接仍可访问，必要时重新复制完整分享文案后再试。",
-            technical_detail=detail,
-        )
-
-    if "detail json did not contain a playable video url" in lowered:
-        return _error(
-            code="douyin_play_url_missing",
-            kind="download",
-            message="抖音详情接口没有返回可播放的视频地址。",
-            hint="这通常是站点限制或视频状态变化导致，稍后重试或换一条链接验证。",
             technical_detail=detail,
         )
 

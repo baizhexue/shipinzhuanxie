@@ -19,3 +19,6 @@ playwright_cookies*.json
 playwright_cookies*.txt
 douyin_detail.json
 tmp_chrome_profile*/
+tmp_*.py
+tmp_*.txt
+mp_error_summary_local.txt

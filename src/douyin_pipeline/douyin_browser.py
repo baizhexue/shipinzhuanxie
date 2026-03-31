@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from pathlib import Path
 import json
 import re
@@ -75,8 +76,12 @@ def _fetch_detail_in_browser(source_url: str, job_dir: Path) -> dict:
             page = browser.new_page()
             page.goto(source_url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(10000)
+            page_html = page.content()
             match = DOUYIN_VIDEO_ID_PATTERN.search(page.url)
             if not match:
+                fallback_detail = _extract_detail_from_html(page_html, page.url)
+                if fallback_detail is not None:
+                    return fallback_detail
                 raise RuntimeError(f"Unable to resolve Douyin video id from URL: {page.url}")
 
             aweme_id = match.group("id")
@@ -96,8 +101,58 @@ def _fetch_detail_in_browser(source_url: str, job_dir: Path) -> dict:
 
     detail = detail_payload.get("aweme_detail")
     if not isinstance(detail, dict):
+        fallback_detail = _extract_detail_from_html(page_html, page.url)
+        if fallback_detail is not None:
+            return fallback_detail
         raise RuntimeError("Browser fallback could not fetch Douyin detail JSON.")
     return detail
+
+
+def _extract_detail_from_html(page_html: str, page_url: str) -> Optional[dict]:
+    match = DOUYIN_VIDEO_ID_PATTERN.search(page_url)
+    aweme_id = match.group("id") if match else "unknown"
+    title = _extract_title_from_html(page_html) or f"douyin_{aweme_id}"
+    video_urls = _extract_video_urls_from_html(page_html)
+    if not video_urls:
+        return None
+    return {
+        "aweme_id": aweme_id,
+        "desc": title,
+        "video": {
+            "play_addr": {
+                "url_list": video_urls,
+            }
+        },
+    }
+
+
+def _extract_title_from_html(page_html: str) -> Optional[str]:
+    patterns = (
+        r'<meta\s+property="og:title"\s+content="([^"]+)"',
+        r"<title>([^<]+)</title>",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page_html, re.IGNORECASE)
+        if match:
+            value = html.unescape(match.group(1)).strip()
+            if value:
+                return value
+    return None
+
+
+def _extract_video_urls_from_html(page_html: str) -> list[str]:
+    seen: set[str] = set()
+    urls: list[str] = []
+    decoded_html = html.unescape(page_html).replace("\\u002F", "/")
+    for segment in decoded_html.split("https://")[1:]:
+        candidate = ("https://" + segment).split()[0].split("<", 1)[0]
+        if "/aweme/v1/play/" not in candidate and "douyinvod" not in candidate:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        urls.append(candidate)
+    return urls
 
 
 def _select_video_url(detail: dict) -> str:
