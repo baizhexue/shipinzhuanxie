@@ -7,7 +7,11 @@ import unittest
 from unittest.mock import patch
 
 from douyin_pipeline.config import Settings
-from douyin_pipeline.transcriber import _create_whisper_model, _run_transcription_with_fallback
+from douyin_pipeline.transcriber import (
+    _build_transcribe_options,
+    _create_whisper_model,
+    _run_transcription_with_fallback,
+)
 
 
 class WhisperRuntimeFallbackTests(unittest.TestCase):
@@ -72,6 +76,34 @@ class WhisperRuntimeFallbackTests(unittest.TestCase):
         self.assertEqual(info.language, 'zh')
         self.assertEqual(mocked_factory.call_args_list[0].args[0].whisper_device, 'auto')
         self.assertEqual(mocked_factory.call_args_list[1].args[0].whisper_device, 'cpu')
+
+    def test_build_transcribe_options_uses_beam_search_defaults(self) -> None:
+        options = _build_transcribe_options(self._make_settings('cpu'))
+
+        self.assertEqual(options['beam_size'], 5)
+        self.assertEqual(options['vad_filter'], True)
+        self.assertNotIn('language', options)
+        self.assertNotIn('initial_prompt', options)
+
+    def test_build_transcribe_options_adds_language_hint_and_prompt(self) -> None:
+        settings = Settings(
+            output_dir=Path('.').resolve(),
+            cookies_file=None,
+            cookies_from_browser=None,
+            ffmpeg_cmd=('ffmpeg',),
+            ytdlp_cmd=('yt-dlp',),
+            whisper_model='medium',
+            whisper_device='cpu',
+            openclaw_token=None,
+            whisper_language='zh',
+            whisper_beam_size=6,
+        )
+
+        options = _build_transcribe_options(settings)
+
+        self.assertEqual(options['beam_size'], 6)
+        self.assertEqual(options['language'], 'zh')
+        self.assertIn('简体中文', options['initial_prompt'])
 
 
 if __name__ == '__main__':

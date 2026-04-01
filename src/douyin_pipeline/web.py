@@ -395,6 +395,7 @@ def main() -> int:
     parser.add_argument("--cookies", default=None, help="cookies.txt path")
     parser.add_argument("--model", default=None, help="whisper model name")
     parser.add_argument("--device", default=None, help="whisper device")
+    parser.add_argument("--language", default=None, help="whisper language hint")
     args = parser.parse_args()
 
     settings = load_settings(
@@ -402,6 +403,7 @@ def main() -> int:
         cookies_file=args.cookies,
         whisper_model=args.model,
         whisper_device=args.device,
+        whisper_language=args.language,
     )
     start_server(settings, host=args.host, port=args.port)
     return 0

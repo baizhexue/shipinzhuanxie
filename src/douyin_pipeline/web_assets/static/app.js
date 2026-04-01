@@ -774,6 +774,7 @@ async function submitJob(event) {
     cookies: document.getElementById("cookiesInput").value.trim(),
     cookies_browser: document.getElementById("browserCookiesInput").value,
     model: document.getElementById("modelInput").value.trim(),
+    language: document.getElementById("languageInput").value.trim(),
     device: document.getElementById("deviceInput").value.trim(),
   };
 
@@ -811,6 +812,7 @@ async function transcribeJob(jobId) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: document.getElementById("modelInput").value.trim(),
+          language: document.getElementById("languageInput").value.trim(),
           device: document.getElementById("deviceInput").value.trim(),
         }),
       },

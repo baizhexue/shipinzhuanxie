@@ -12,6 +12,11 @@ import wave
 
 from douyin_pipeline.config import Settings
 
+DEFAULT_WHISPER_BEAM_SIZE = 5
+SIMPLIFIED_CHINESE_INITIAL_PROMPT = (
+    "以下是简体中文视频转写稿，请优先输出简体中文，保留正常标点、常见互联网词汇和专有名词。"
+)
+
 
 @dataclass(frozen=True)
 class TranscriptResult:
@@ -194,22 +199,45 @@ def _create_whisper_model(settings: Settings):
 
 def _run_transcription_with_fallback(audio_path: Path, settings: Settings):
     model = _create_whisper_model(settings)
+    transcribe_options = _build_transcribe_options(settings)
     try:
-        return model.transcribe(
-            str(audio_path),
-            vad_filter=True,
-            beam_size=1,
-        )
+        return model.transcribe(str(audio_path), **transcribe_options)
     except Exception as exc:
         if settings.whisper_device == "auto" and _should_retry_whisper_on_cpu(exc):
             cpu_settings = replace(settings, whisper_device="cpu")
             cpu_model = _create_whisper_model(cpu_settings)
-            return cpu_model.transcribe(
-                str(audio_path),
-                vad_filter=True,
-                beam_size=1,
-            )
+            return cpu_model.transcribe(str(audio_path), **transcribe_options)
         raise
+
+
+def _build_transcribe_options(settings: Settings) -> dict[str, object]:
+    options: dict[str, object] = {
+        "vad_filter": True,
+        "beam_size": max(int(settings.whisper_beam_size or DEFAULT_WHISPER_BEAM_SIZE), 1),
+    }
+    language = _normalize_language_hint(settings.whisper_language)
+    if language:
+        options["language"] = language
+        initial_prompt = _build_initial_prompt(language)
+        if initial_prompt:
+            options["initial_prompt"] = initial_prompt
+    return options
+
+
+def _normalize_language_hint(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+
+    text = value.strip().lower()
+    if not text or text == "auto":
+        return None
+    return text
+
+
+def _build_initial_prompt(language: str) -> Optional[str]:
+    if language.startswith("zh"):
+        return SIMPLIFIED_CHINESE_INITIAL_PROMPT
+    return None
 
 
 def _should_retry_whisper_on_cpu(exc: BaseException) -> bool:

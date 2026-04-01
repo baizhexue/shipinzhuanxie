@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from douyin_pipeline.config import _discover_ytdlp_command
+from douyin_pipeline.config import _discover_ytdlp_command, load_settings
 
 
 class ConfigTests(unittest.TestCase):
@@ -29,6 +29,38 @@ class ConfigTests(unittest.TestCase):
                 actual = _discover_ytdlp_command()
 
         self.assertEqual(actual, str(standalone))
+
+    def test_load_settings_uses_balanced_whisper_defaults(self) -> None:
+        with TemporaryDirectory() as tmp_dir, patch.dict("os.environ", {}, clear=True), patch(
+            "douyin_pipeline.config._discover_ffmpeg_command",
+            return_value="ffmpeg",
+        ), patch(
+            "douyin_pipeline.config._discover_ytdlp_command",
+            return_value="yt-dlp",
+        ):
+            settings = load_settings(output_dir=tmp_dir)
+
+        self.assertEqual(settings.whisper_model, "medium")
+        self.assertEqual(settings.whisper_device, "auto")
+        self.assertEqual(settings.whisper_beam_size, 5)
+        self.assertIsNone(settings.whisper_language)
+
+    def test_load_settings_normalizes_auto_language_to_none(self) -> None:
+        with TemporaryDirectory() as tmp_dir, patch.dict(
+            "os.environ",
+            {"WHISPER_LANGUAGE": "auto", "WHISPER_BEAM_SIZE": "7"},
+            clear=True,
+        ), patch(
+            "douyin_pipeline.config._discover_ffmpeg_command",
+            return_value="ffmpeg",
+        ), patch(
+            "douyin_pipeline.config._discover_ytdlp_command",
+            return_value="yt-dlp",
+        ):
+            settings = load_settings(output_dir=tmp_dir)
+
+        self.assertIsNone(settings.whisper_language)
+        self.assertEqual(settings.whisper_beam_size, 7)
 
 
 if __name__ == "__main__":

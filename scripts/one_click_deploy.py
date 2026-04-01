@@ -12,7 +12,7 @@ from pathlib import Path
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4444
 DOCKER_PORT = 4444
-DEFAULT_WHISPER_MODEL = "small"
+DEFAULT_WHISPER_MODEL = "medium"
 
 
 def main() -> int:

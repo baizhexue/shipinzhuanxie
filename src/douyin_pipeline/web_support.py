@@ -42,6 +42,7 @@ def build_request_settings(base: Settings, payload: dict[str, Any]) -> Settings:
     browser_value = str(payload.get("cookies_browser", "")).strip()
     model_value = str(payload.get("model", "")).strip()
     device_value = str(payload.get("device", "")).strip()
+    language_value = str(payload.get("language", "")).strip()
 
     return replace(
         base,
@@ -49,6 +50,7 @@ def build_request_settings(base: Settings, payload: dict[str, Any]) -> Settings:
         cookies_from_browser=browser_value or base.cookies_from_browser,
         whisper_model=model_value or base.whisper_model,
         whisper_device=device_value or base.whisper_device,
+        whisper_language=language_value or base.whisper_language,
     )
 
 

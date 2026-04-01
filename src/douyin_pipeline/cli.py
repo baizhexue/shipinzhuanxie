@@ -98,6 +98,7 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--model", default=None, help="whisper model name")
     parser.add_argument("--device", default=None, help="whisper device, e.g. auto/cpu/cuda")
+    parser.add_argument("--language", default=None, help="whisper language hint, e.g. zh/en/ja")
 
 
 def main() -> int:
@@ -111,6 +112,7 @@ def main() -> int:
             cookies_from_browser=getattr(args, "browser_cookies", None),
             whisper_model=getattr(args, "model", None),
             whisper_device=getattr(args, "device", None),
+            whisper_language=getattr(args, "language", None),
         )
         settings.output_dir.mkdir(parents=True, exist_ok=True)
 

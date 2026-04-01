@@ -20,6 +20,8 @@ class Settings:
     whisper_model: str
     whisper_device: str
     openclaw_token: Optional[str]
+    whisper_language: Optional[str] = None
+    whisper_beam_size: int = 5
 
 
 def load_settings(
@@ -29,12 +31,16 @@ def load_settings(
     cookies_from_browser: Optional[str] = None,
     whisper_model: Optional[str] = None,
     whisper_device: Optional[str] = None,
+    whisper_language: Optional[str] = None,
+    whisper_beam_size: Optional[int] = None,
 ) -> Settings:
     env_output_dir = os.getenv("APP_OUTPUT_DIR", "output")
     env_ffmpeg_bin = os.getenv("FFMPEG_BIN") or _discover_ffmpeg_command()
     env_ytdlp_bin = os.getenv("YTDLP_BIN") or _discover_ytdlp_command()
-    env_whisper_model = os.getenv("WHISPER_MODEL", "small")
+    env_whisper_model = os.getenv("WHISPER_MODEL", "medium")
     env_whisper_device = os.getenv("WHISPER_DEVICE", "auto")
+    env_whisper_language = os.getenv("WHISPER_LANGUAGE")
+    env_whisper_beam_size = max(int(os.getenv("WHISPER_BEAM_SIZE", "5") or "5"), 1)
     env_cookies_file = os.getenv("DOUYIN_COOKIES_FILE")
     env_cookies_browser = os.getenv("DOUYIN_COOKIES_BROWSER")
     env_openclaw_token = os.getenv("OPENCLAW_SHARED_TOKEN")
@@ -51,6 +57,13 @@ def load_settings(
         whisper_model=whisper_model or env_whisper_model,
         whisper_device=whisper_device or env_whisper_device,
         openclaw_token=env_openclaw_token or None,
+        whisper_language=_normalize_whisper_language(
+            whisper_language if whisper_language is not None else env_whisper_language
+        ),
+        whisper_beam_size=max(
+            int(whisper_beam_size if whisper_beam_size is not None else env_whisper_beam_size),
+            1,
+        ),
     )
 
 
@@ -147,3 +160,13 @@ def _parse_command(value: str) -> tuple[str, ...]:
     if not parts:
         raise ValueError("Command configuration cannot be empty.")
     return parts
+
+
+def _normalize_whisper_language(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+
+    text = value.strip().lower()
+    if not text or text == "auto":
+        return None
+    return text

@@ -206,7 +206,7 @@ bash ./scripts/one_click_deploy.sh
 - 如果本机可用 Docker，优先执行 `docker compose up --build -d web`
 - 如果没有 Docker，就自动创建 `.venv`、安装 `.[web,asr]`、生成 `.env`，然后启动本地 Web 服务
 - 本地模式会在启动前检查系统级依赖，例如 `ffmpeg`
-- 启用 ASR 时，本地模式会额外预下载默认 Whisper 模型 `small`
+- 启用 ASR 时，本地模式会额外预下载默认 Whisper 模型 `medium`
 
 默认访问地址：
 
@@ -388,6 +388,8 @@ douyin-telegram --token <your_bot_token>
 - `YTDLP_BIN`
 - `WHISPER_MODEL`
 - `WHISPER_DEVICE`
+- `WHISPER_LANGUAGE`
+- `WHISPER_BEAM_SIZE`
 - `DOUYIN_COOKIES_FILE`
 - `DOUYIN_COOKIES_BROWSER`
 - `TELEGRAM_BOT_TOKEN`
