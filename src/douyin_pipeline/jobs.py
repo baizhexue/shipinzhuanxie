@@ -102,6 +102,7 @@ def to_public_job(manifest: dict[str, Any]) -> dict[str, Any]:
         ("video_path", "Video", "video"),
         ("audio_path", "Audio", "audio"),
         ("transcript_path", "Transcript", "text"),
+        ("summary_path", "Summary", "summary"),
     ):
         relative_path = payload.get(key)
         if not relative_path:

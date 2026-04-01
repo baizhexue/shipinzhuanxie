@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import logging
@@ -13,14 +13,25 @@ import urllib.error
 import urllib.request
 
 from douyin_pipeline.config import Settings
+from douyin_pipeline.deepseek_summary import (
+    SUMMARY_STYLE_LABELS,
+    SummaryError,
+    summarize_to_file,
+)
 from douyin_pipeline.errors import classify_exception
-from douyin_pipeline.jobs import read_manifest, to_public_job
+from douyin_pipeline.jobs import read_manifest, read_transcript_text, to_public_job, write_manifest
 from douyin_pipeline.logging_utils import configure_logging
 from douyin_pipeline.parser import extract_share_url
 from douyin_pipeline.pipeline import prepare_job, run_prepared_job
 from douyin_pipeline.telegram_messages import (
     DEFAULT_MESSAGE_LIMIT,
     DEFAULT_TRANSCRIPT_PREVIEW_LIMIT,
+    build_summary_document_caption,
+    build_summary_expired_text,
+    build_summary_failed_text,
+    build_summary_selection_text,
+    build_summary_skipped_text,
+    build_summary_started_text,
     build_document_send_failed_text,
     build_failure_manifest_text,
     build_failure_text,
@@ -34,6 +45,7 @@ from douyin_pipeline.telegram_messages import (
     build_web_missing_text,
     phase_progress_message,
     resolve_transcript_file,
+    split_message_chunks,
     transcribing_progress_message,
     truncate_text,
 )
@@ -42,7 +54,8 @@ from douyin_pipeline.telegram_messages import (
 DEFAULT_ALLOWED_UPDATES = ("message", "callback_query")
 DEFAULT_POLL_TIMEOUT = 25
 DEFAULT_RETRY_DELAY = 3.0
-CALLBACK_PREFIX = "txmode:"
+MODE_CALLBACK_PREFIX = "txmode:"
+SUMMARY_CALLBACK_PREFIX = "txsummary:"
 MAX_PENDING_SELECTIONS = 20
 logger = logging.getLogger(__name__)
 
@@ -301,12 +314,38 @@ class TelegramBotRunner:
                 self._client.answer_callback_query(callback_id, text="当前会话未授权。", show_alert=False)
             return
 
-        selection = _parse_callback_data(data)
-        if selection is None:
-            if callback_id:
-                self._client.answer_callback_query(callback_id, text="无效选择。", show_alert=False)
+        mode_selection = _parse_mode_callback_data(data)
+        if mode_selection is not None:
+            self._handle_mode_callback(
+                callback_query,
+                callback_id=callback_id,
+                chat_id=chat_id,
+                selection=mode_selection,
+            )
             return
 
+        summary_selection = _parse_summary_callback_data(data)
+        if summary_selection is not None:
+            self._handle_summary_callback(
+                callback_query,
+                callback_id=callback_id,
+                chat_id=chat_id,
+                selection=summary_selection,
+            )
+            return
+
+        if callback_id:
+            self._client.answer_callback_query(callback_id, text="无效选择。", show_alert=False)
+
+    def _handle_mode_callback(
+        self,
+        callback_query: dict[str, Any],
+        *,
+        callback_id: str,
+        chat_id: int,
+        selection: tuple[str, str],
+    ) -> None:
+        message = callback_query.get("message") or {}
         request_id, mode = selection
         pending_request = self._pop_pending_request(request_id)
         if pending_request is None or int(pending_request.get("chat_id") or 0) != chat_id:
@@ -324,12 +363,7 @@ class TelegramBotRunner:
                     show_alert=False,
                 )
 
-        message_id = message.get("message_id")
-        if message_id is not None:
-            try:
-                self._client.edit_message_reply_markup(chat_id, int(message_id), reply_markup=None)
-            except Exception:
-                logger.exception("telegram bot failed to clear selection markup chat_id=%s", chat_id)
+        self._clear_callback_markup(chat_id, message)
 
         if mode == "cancel":
             self._client.send_message(chat_id, "这条任务已取消。")
@@ -338,6 +372,46 @@ class TelegramBotRunner:
         thread = Thread(
             target=self._process_message_job,
             args=(chat_id, str(pending_request["raw_input"]), mode),
+            daemon=True,
+        )
+        thread.start()
+
+    def _handle_summary_callback(
+        self,
+        callback_query: dict[str, Any],
+        *,
+        callback_id: str,
+        chat_id: int,
+        selection: tuple[str, str],
+    ) -> None:
+        message = callback_query.get("message") or {}
+        request_id, style = selection
+        pending_summary = self._pop_pending_summary(request_id)
+        if pending_summary is None or int(pending_summary.get("chat_id") or 0) != chat_id:
+            if callback_id:
+                self._client.answer_callback_query(callback_id, text=build_summary_expired_text(), show_alert=False)
+            return
+
+        if callback_id:
+            if style == "skip":
+                self._client.answer_callback_query(callback_id, text="已跳过总结。", show_alert=False)
+            else:
+                self._client.answer_callback_query(
+                    callback_id,
+                    text=f"已选择{SUMMARY_STYLE_LABELS[style]}总结",
+                    show_alert=False,
+                )
+
+        self._clear_callback_markup(chat_id, message)
+
+        job_id = str(pending_summary["job_id"])
+        if style == "skip":
+            self._client.send_message(chat_id, build_summary_skipped_text(job_id))
+            return
+
+        thread = Thread(
+            target=self._process_summary_job,
+            args=(chat_id, job_id, style),
             daemon=True,
         )
         thread.start()
@@ -409,6 +483,86 @@ class TelegramBotRunner:
             except Exception as exc:
                 self._client.send_message(chat_id, build_document_send_failed_text(exc))
 
+        if absolute_transcript_path is not None and self._app_settings.deepseek_api_key:
+            summary_request_id = self._create_pending_summary(chat_id, str(public_job.get("job_id", "-")))
+            self._client.send_message(
+                chat_id,
+                build_summary_selection_text(str(public_job.get("job_id", "-"))),
+                reply_markup=_build_summary_selection_markup(summary_request_id),
+            )
+
+    def _process_summary_job(self, chat_id: int, job_id: str, style: str) -> None:
+        style_label = SUMMARY_STYLE_LABELS[style]
+        logger.info("telegram summary started chat_id=%s job_id=%s style=%s", chat_id, job_id, style)
+        self._client.send_message(chat_id, build_summary_started_text(job_id, style_label))
+
+        job_dir = self._app_settings.output_dir / job_id
+        manifest = read_manifest(job_dir)
+        if manifest is None:
+            self._client.send_message(chat_id, build_summary_failed_text(style_label, "任务记录不存在。"))
+            return
+
+        transcript_text = read_transcript_text(self._app_settings.output_dir, manifest)
+        if not transcript_text:
+            self._client.send_message(chat_id, build_summary_failed_text(style_label, "转写文本不存在。"))
+            return
+
+        self._write_summary_status(job_id, status="running", style=style)
+
+        try:
+            summary_result = summarize_to_file(
+                transcript_text,
+                style=style,
+                job_dir=job_dir,
+                settings=self._app_settings,
+            )
+        except Exception as exc:
+            logger.exception("telegram summary failed chat_id=%s job_id=%s style=%s", chat_id, job_id, style)
+            self._write_summary_status(job_id, status="error", style=style, error=str(exc))
+            message = str(exc)
+            if isinstance(exc, SummaryError) and not message:
+                message = "DeepSeek 总结失败。"
+            self._client.send_message(chat_id, build_summary_failed_text(style_label, message))
+            return
+
+        updated_manifest = self._write_summary_status(
+            job_id,
+            status="success",
+            style=style,
+            summary_path=summary_result.summary_path,
+            summary_text=summary_result.text,
+            error=None,
+        )
+        public_job = to_public_job(updated_manifest)
+        if self._bot_settings.public_base_url:
+            summary_links = [
+                line for line in build_success_summary_text(public_job, self._bot_settings.public_base_url).splitlines()
+                if line.startswith("总结:")
+            ]
+            if summary_links:
+                self._client.send_message(chat_id, "\n".join(summary_links))
+
+        for chunk in split_message_chunks(summary_result.text):
+            self._client.send_message(chat_id, chunk)
+
+        try:
+            self._client.send_document(
+                chat_id,
+                summary_result.summary_path,
+                caption=build_summary_document_caption(job_id, style_label),
+            )
+        except Exception as exc:
+            self._client.send_message(chat_id, build_document_send_failed_text(exc))
+
+    def _clear_callback_markup(self, chat_id: int, message: dict[str, Any]) -> None:
+        message_id = message.get("message_id")
+        if message_id is None:
+            return
+        try:
+            self._client.edit_message_reply_markup(chat_id, int(message_id), reply_markup=None)
+        except Exception:
+            logger.exception("telegram bot failed to clear selection markup chat_id=%s", chat_id)
+
     def _create_pending_request(self, chat_id: int, raw_input: str) -> str:
         pending_requests = dict(self._state.get("pending_requests") or {})
         pending_requests = _prune_pending_requests(pending_requests)
@@ -428,6 +582,51 @@ class TelegramBotRunner:
         self._state["pending_requests"] = pending_requests
         _save_state(self._bot_settings.state_path, self._state)
         return pending_request
+
+    def _create_pending_summary(self, chat_id: int, job_id: str) -> str:
+        pending_summaries = dict(self._state.get("pending_summaries") or {})
+        pending_summaries = _prune_pending_summaries(pending_summaries)
+        request_id = uuid.uuid4().hex[:10]
+        pending_summaries[request_id] = {
+            "chat_id": chat_id,
+            "job_id": job_id,
+            "created_at": time(),
+        }
+        self._state["pending_summaries"] = pending_summaries
+        _save_state(self._bot_settings.state_path, self._state)
+        return request_id
+
+    def _pop_pending_summary(self, request_id: str) -> Optional[dict[str, Any]]:
+        pending_summaries = dict(self._state.get("pending_summaries") or {})
+        pending_summary = pending_summaries.pop(request_id, None)
+        self._state["pending_summaries"] = pending_summaries
+        _save_state(self._bot_settings.state_path, self._state)
+        return pending_summary
+
+    def _write_summary_status(
+        self,
+        job_id: str,
+        *,
+        status: str,
+        style: str,
+        summary_path: Optional[Path] = None,
+        summary_text: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> dict[str, Any]:
+        job_dir = self._app_settings.output_dir / job_id
+        manifest = read_manifest(job_dir)
+        if manifest is None:
+            raise ValueError("Job manifest not found.")
+
+        manifest["summary_status"] = status
+        manifest["summary_style"] = style
+        manifest["summary_error"] = error
+        if summary_path is not None:
+            manifest["summary_path"] = str(summary_path.relative_to(self._app_settings.output_dir))
+        if summary_text is not None:
+            manifest["summary_preview"] = truncate_text(summary_text, 800)
+        write_manifest(job_dir, manifest)
+        return manifest
 
 
 class TelegramBotClient:
@@ -616,22 +815,26 @@ def _extract_message_text(message: dict[str, Any]) -> str:
 
 def _load_state(state_path: Path) -> dict[str, Any]:
     if not state_path.exists():
-        return {"offset": None, "pending_requests": {}}
+        return {"offset": None, "pending_requests": {}, "pending_summaries": {}}
 
     try:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"offset": None, "pending_requests": {}}
+        return {"offset": None, "pending_requests": {}, "pending_summaries": {}}
 
     if not isinstance(payload, dict):
-        return {"offset": None, "pending_requests": {}}
+        return {"offset": None, "pending_requests": {}, "pending_summaries": {}}
 
     pending_requests = payload.get("pending_requests")
     if not isinstance(pending_requests, dict):
         pending_requests = {}
+    pending_summaries = payload.get("pending_summaries")
+    if not isinstance(pending_summaries, dict):
+        pending_summaries = {}
     return {
         "offset": payload.get("offset"),
         "pending_requests": _prune_pending_requests(pending_requests),
+        "pending_summaries": _prune_pending_summaries(pending_summaries),
     }
 
 
@@ -663,27 +866,54 @@ def _build_mode_selection_markup(request_id: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [
-                {"text": "快速转写", "callback_data": f"{CALLBACK_PREFIX}fast:{request_id}"},
-                {"text": "高精度转写", "callback_data": f"{CALLBACK_PREFIX}accurate:{request_id}"},
+                {"text": "快速转写", "callback_data": f"{MODE_CALLBACK_PREFIX}fast:{request_id}"},
+                {"text": "高精度转写", "callback_data": f"{MODE_CALLBACK_PREFIX}accurate:{request_id}"},
             ],
             [
-                {"text": "只下载视频", "callback_data": f"{CALLBACK_PREFIX}download:{request_id}"},
-                {"text": "取消", "callback_data": f"{CALLBACK_PREFIX}cancel:{request_id}"},
+                {"text": "只下载视频", "callback_data": f"{MODE_CALLBACK_PREFIX}download:{request_id}"},
+                {"text": "取消", "callback_data": f"{MODE_CALLBACK_PREFIX}cancel:{request_id}"},
             ],
         ]
     }
 
 
-def _parse_callback_data(data: str) -> Optional[tuple[str, str]]:
-    if not data.startswith(CALLBACK_PREFIX):
+def _build_summary_selection_markup(request_id: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "通用", "callback_data": f"{SUMMARY_CALLBACK_PREFIX}general:{request_id}"},
+                {"text": "大白话", "callback_data": f"{SUMMARY_CALLBACK_PREFIX}plain:{request_id}"},
+                {"text": "知识型", "callback_data": f"{SUMMARY_CALLBACK_PREFIX}knowledge:{request_id}"},
+            ],
+            [
+                {"text": "跳过总结", "callback_data": f"{SUMMARY_CALLBACK_PREFIX}skip:{request_id}"},
+            ],
+        ]
+    }
+
+
+def _parse_mode_callback_data(data: str) -> Optional[tuple[str, str]]:
+    if not data.startswith(MODE_CALLBACK_PREFIX):
         return None
-    payload = data[len(CALLBACK_PREFIX):]
+    payload = data[len(MODE_CALLBACK_PREFIX):]
     mode, separator, request_id = payload.partition(":")
     if not separator or not request_id:
         return None
     if mode not in {*MODE_PRESETS.keys(), "cancel"}:
         return None
     return request_id, mode
+
+
+def _parse_summary_callback_data(data: str) -> Optional[tuple[str, str]]:
+    if not data.startswith(SUMMARY_CALLBACK_PREFIX):
+        return None
+    payload = data[len(SUMMARY_CALLBACK_PREFIX):]
+    style, separator, request_id = payload.partition(":")
+    if not separator or not request_id:
+        return None
+    if style not in {*SUMMARY_STYLE_LABELS.keys(), "skip"}:
+        return None
+    return request_id, style
 
 
 def _prune_pending_requests(pending_requests: dict[str, Any]) -> dict[str, Any]:
@@ -711,6 +941,31 @@ def _prune_pending_requests(pending_requests: dict[str, Any]) -> dict[str, Any]:
     return dict(normalized_items[:MAX_PENDING_SELECTIONS])
 
 
+def _prune_pending_summaries(pending_summaries: dict[str, Any]) -> dict[str, Any]:
+    normalized_items: list[tuple[str, dict[str, Any]]] = []
+    for request_id, payload in pending_summaries.items():
+        if not isinstance(payload, dict):
+            continue
+        job_id = str(payload.get("job_id") or "").strip()
+        chat_id = payload.get("chat_id")
+        created_at = float(payload.get("created_at") or 0.0)
+        if not job_id or not chat_id:
+            continue
+        normalized_items.append(
+            (
+                str(request_id),
+                {
+                    "chat_id": int(chat_id),
+                    "job_id": job_id,
+                    "created_at": created_at,
+                },
+            )
+        )
+
+    normalized_items.sort(key=lambda item: item[1]["created_at"], reverse=True)
+    return dict(normalized_items[:MAX_PENDING_SELECTIONS])
+
+
 def _resolve_mode_settings(base_settings: Settings, mode: str) -> tuple[Settings, str, str]:
     preset = MODE_PRESETS[mode]
     action = str(preset["action"])
@@ -728,7 +983,6 @@ def _resolve_mode_settings(base_settings: Settings, mode: str) -> tuple[Settings
         action,
         label,
     )
-
 
 class TelegramProgressReporter:
     def __init__(
@@ -781,3 +1035,4 @@ class TelegramProgressReporter:
     def _send(self, message: str) -> None:
         self._last_sent_at = monotonic()
         self._client.send_message(self._chat_id, message)
+

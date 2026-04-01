@@ -9,16 +9,22 @@ from douyin_pipeline.telegram_messages import (
     build_failure_text,
     build_help_text,
     build_job_started_text,
-    build_job_received_text,
     build_mode_expired_text,
     build_mode_selection_text,
     build_public_links,
     build_success_summary_text,
+    build_summary_document_caption,
+    build_summary_expired_text,
+    build_summary_failed_text,
+    build_summary_selection_text,
+    build_summary_skipped_text,
+    build_summary_started_text,
     build_transcript_caption,
     build_web_missing_text,
     format_clock,
     phase_progress_message,
     resolve_transcript_file,
+    split_message_chunks,
     transcribing_progress_message,
     truncate_text,
 )
@@ -35,12 +41,6 @@ class TelegramMessagesTests(unittest.TestCase):
 
     def test_build_web_missing_text_is_chinese(self) -> None:
         self.assertEqual(build_web_missing_text(), "网页地址还没有配置。")
-
-    def test_build_job_received_text_includes_job_id(self) -> None:
-        text = build_job_received_text("job-123")
-
-        self.assertIn("已收到任务", text)
-        self.assertIn("job-123", text)
 
     def test_build_mode_selection_text_is_actionable(self) -> None:
         text = build_mode_selection_text()
@@ -60,6 +60,16 @@ class TelegramMessagesTests(unittest.TestCase):
         download_text = build_job_started_text("job-2", mode_label="只下载视频", action="download")
         self.assertIn("只下载视频", download_text)
         self.assertIn("正在下载视频", download_text)
+
+    def test_build_summary_messages_are_chinese(self) -> None:
+        selection_text = build_summary_selection_text("job-1")
+        self.assertIn("要不要继续做总结", selection_text)
+        self.assertIn("job-1", selection_text)
+        self.assertEqual(build_summary_expired_text(), "这个总结选项已经失效了，请重新发送一条链接。")
+        self.assertEqual(build_summary_started_text("job-1", "通用"), "已开始总结。\n任务 ID：job-1\n风格：通用")
+        self.assertEqual(build_summary_skipped_text("job-1"), "已跳过总结。\n任务 ID：job-1")
+        self.assertEqual(build_summary_failed_text("通用", "超时"), "通用总结失败。\n原因：超时")
+        self.assertEqual(build_summary_document_caption("job-1", "通用"), "通用总结 - job-1")
 
     def test_build_failure_text_appends_hint(self) -> None:
         self.assertEqual(build_failure_text("下载失败", "检查链接"), "下载失败\n建议：检查链接")
@@ -86,12 +96,12 @@ class TelegramMessagesTests(unittest.TestCase):
                 "title": "demo",
                 "files": [{"label": "Video", "url": "/output/job-1/demo.mp4"}],
             },
-            "http://127.0.0.1:8000",
+            "http://127.0.0.1:4444",
         )
 
         self.assertIn("任务完成。", text)
         self.assertIn("标题：demo", text)
-        self.assertIn("视频: http://127.0.0.1:8000/output/job-1/demo.mp4", text)
+        self.assertIn("视频: http://127.0.0.1:4444/output/job-1/demo.mp4", text)
 
     def test_build_public_links_uses_chinese_labels(self) -> None:
         links = build_public_links(
@@ -100,6 +110,7 @@ class TelegramMessagesTests(unittest.TestCase):
                     {"label": "Video", "url": "/video"},
                     {"label": "Audio", "url": "/audio"},
                     {"label": "Transcript", "url": "/text"},
+                    {"label": "Summary", "url": "/summary"},
                 ]
             },
             "http://host",
@@ -111,12 +122,17 @@ class TelegramMessagesTests(unittest.TestCase):
                 "视频: http://host/video",
                 "音频: http://host/audio",
                 "文本: http://host/text",
+                "总结: http://host/summary",
             ],
         )
 
     def test_truncate_text_adds_ellipsis(self) -> None:
         self.assertEqual(truncate_text("abcdef", 4), "abcd...")
         self.assertEqual(truncate_text("abc", 4), "abc")
+
+    def test_split_message_chunks_prefers_newlines(self) -> None:
+        chunks = split_message_chunks("第一段\n第二段\n第三段", limit=5)
+        self.assertEqual(chunks, ["第一段", "第二段", "第三段"])
 
     def test_phase_progress_message_formats_known_phase(self) -> None:
         text = phase_progress_message({"phase": "loading_model", "job_id": "job-1"})
@@ -135,8 +151,8 @@ class TelegramMessagesTests(unittest.TestCase):
         )
 
         self.assertIn("转写进度 68%", text)
-        self.assertIn("已处理: 0:42 / 2:00", text)
-        self.assertIn("预计剩余: 0:18", text)
+        self.assertIn("已处理：0:42 / 2:00", text)
+        self.assertIn("预计剩余：0:18", text)
 
     def test_format_clock_formats_hours_and_minutes(self) -> None:
         self.assertEqual(format_clock(42), "0:42")

@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 DEFAULT_MESSAGE_LIMIT = 3900
 DEFAULT_TRANSCRIPT_PREVIEW_LIMIT = 3500
+DEFAULT_SUMMARY_CHUNK_LIMIT = 3400
 
 
 def build_help_text() -> str:
@@ -44,6 +45,34 @@ def build_job_started_text(job_id: str, *, mode_label: str, action: str) -> str:
     if action == "download":
         return f"已开始处理。\n任务 ID：{job_id}\n模式：{mode_label}\n正在下载视频，请稍等。"
     return f"已开始处理。\n任务 ID：{job_id}\n模式：{mode_label}\n正在下载并转写，请稍等。"
+
+
+def build_summary_selection_text(job_id: str) -> str:
+    return (
+        f"任务已完成。\n任务 ID：{job_id}\n"
+        "要不要继续做总结？\n"
+        "如果要，总结风格选下面一个；如果不需要，点“跳过总结”。"
+    )
+
+
+def build_summary_expired_text() -> str:
+    return "这个总结选项已经失效了，请重新发送一条链接。"
+
+
+def build_summary_started_text(job_id: str, style_label: str) -> str:
+    return f"已开始总结。\n任务 ID：{job_id}\n风格：{style_label}"
+
+
+def build_summary_skipped_text(job_id: str) -> str:
+    return f"已跳过总结。\n任务 ID：{job_id}"
+
+
+def build_summary_failed_text(style_label: str, message: str) -> str:
+    return f"{style_label}总结失败。\n原因：{message}"
+
+
+def build_summary_document_caption(job_id: str, style_label: str) -> str:
+    return f"{style_label}总结 - {job_id}"
 
 
 def build_failure_text(message: str, hint: Optional[str]) -> str:
@@ -99,6 +128,7 @@ def build_public_links(public_job: dict[str, Any], base_url: str) -> list[str]:
         "Video": "视频",
         "Audio": "音频",
         "Transcript": "文本",
+        "Summary": "总结",
     }
     lines = []
     for file_item in public_job.get("files", []):
@@ -114,6 +144,27 @@ def truncate_text(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[:limit].rstrip() + "..."
+
+
+def split_message_chunks(value: str, limit: int = DEFAULT_SUMMARY_CHUNK_LIMIT) -> list[str]:
+    text = value.strip()
+    if not text:
+        return []
+
+    chunks: list[str] = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+
+        split_at = text.rfind("\n", 0, limit)
+        if split_at < limit * 0.6:
+            split_at = limit
+
+        chunks.append(text[:split_at].rstrip())
+        text = text[split_at:].lstrip()
+
+    return chunks
 
 
 def phase_progress_message(manifest: dict[str, Any]) -> Optional[str]:
@@ -137,9 +188,9 @@ def transcribing_progress_message(manifest: dict[str, Any], percent: float) -> s
     eta = manifest.get("eta_seconds")
     parts = [f"转写进度 {int(percent)}%", f"任务 ID：{job_id}"]
     if processed is not None and duration:
-        parts.append(f"已处理: {format_clock(float(processed))} / {format_clock(float(duration))}")
+        parts.append(f"已处理：{format_clock(float(processed))} / {format_clock(float(duration))}")
     if eta is not None and float(eta) > 0:
-        parts.append(f"预计剩余: {format_clock(float(eta))}")
+        parts.append(f"预计剩余：{format_clock(float(eta))}")
     return "\n".join(parts)
 
 

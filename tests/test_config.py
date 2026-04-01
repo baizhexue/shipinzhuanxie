@@ -44,6 +44,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.whisper_device, "auto")
         self.assertEqual(settings.whisper_beam_size, 5)
         self.assertIsNone(settings.whisper_language)
+        self.assertIsNone(settings.deepseek_api_key)
+        self.assertEqual(settings.deepseek_base_url, "https://api.deepseek.com")
+        self.assertEqual(settings.deepseek_model, "deepseek-chat")
+        self.assertEqual(settings.deepseek_timeout_seconds, 120)
 
     def test_load_settings_normalizes_auto_language_to_none(self) -> None:
         with TemporaryDirectory() as tmp_dir, patch.dict(

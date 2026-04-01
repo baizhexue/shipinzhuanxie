@@ -22,6 +22,10 @@ class Settings:
     openclaw_token: Optional[str]
     whisper_language: Optional[str] = None
     whisper_beam_size: int = 5
+    deepseek_api_key: Optional[str] = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_timeout_seconds: int = 120
 
 
 def load_settings(
@@ -44,6 +48,10 @@ def load_settings(
     env_cookies_file = os.getenv("DOUYIN_COOKIES_FILE")
     env_cookies_browser = os.getenv("DOUYIN_COOKIES_BROWSER")
     env_openclaw_token = os.getenv("OPENCLAW_SHARED_TOKEN")
+    env_deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+    env_deepseek_base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    env_deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    env_deepseek_timeout_seconds = max(int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "120") or "120"), 30)
 
     resolved_cookies = cookies_file or env_cookies_file
     resolved_browser = cookies_from_browser or env_cookies_browser
@@ -64,6 +72,10 @@ def load_settings(
             int(whisper_beam_size if whisper_beam_size is not None else env_whisper_beam_size),
             1,
         ),
+        deepseek_api_key=(env_deepseek_api_key or "").strip() or None,
+        deepseek_base_url=_normalize_base_url(env_deepseek_base_url),
+        deepseek_model=(env_deepseek_model or "deepseek-chat").strip() or "deepseek-chat",
+        deepseek_timeout_seconds=env_deepseek_timeout_seconds,
     )
 
 
@@ -170,3 +182,10 @@ def _normalize_whisper_language(value: Optional[str]) -> Optional[str]:
     if not text or text == "auto":
         return None
     return text
+
+
+def _normalize_base_url(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return "https://api.deepseek.com"
+    return text.rstrip("/")
