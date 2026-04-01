@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
 from threading import Thread
-from time import monotonic, sleep
+from time import monotonic, sleep, time
 from typing import Any, Iterable, Optional
 import json
 import mimetypes
@@ -25,7 +25,10 @@ from douyin_pipeline.telegram_messages import (
     build_failure_manifest_text,
     build_failure_text,
     build_help_text,
+    build_job_started_text,
     build_job_received_text,
+    build_mode_expired_text,
+    build_mode_selection_text,
     build_success_summary_text,
     build_transcript_caption,
     build_web_missing_text,
@@ -36,10 +39,34 @@ from douyin_pipeline.telegram_messages import (
 )
 
 
-DEFAULT_ALLOWED_UPDATES = ("message",)
+DEFAULT_ALLOWED_UPDATES = ("message", "callback_query")
 DEFAULT_POLL_TIMEOUT = 25
 DEFAULT_RETRY_DELAY = 3.0
+CALLBACK_PREFIX = "txmode:"
+MAX_PENDING_SELECTIONS = 20
 logger = logging.getLogger(__name__)
+
+
+MODE_PRESETS = {
+    "fast": {
+        "label": "快速转写",
+        "action": "run",
+        "whisper_model": "large-v3-turbo",
+        "whisper_language": "zh",
+        "whisper_beam_size": 3,
+    },
+    "accurate": {
+        "label": "高精度转写",
+        "action": "run",
+        "whisper_model": "large-v3",
+        "whisper_language": "zh",
+        "whisper_beam_size": 5,
+    },
+    "download": {
+        "label": "只下载视频",
+        "action": "download",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -214,6 +241,11 @@ class TelegramBotRunner:
             self._handle_update(update)
 
     def _handle_update(self, update: dict[str, Any]) -> None:
+        callback_query = update.get("callback_query")
+        if isinstance(callback_query, dict):
+            self._handle_callback_query(callback_query)
+            return
+
         message = update.get("message")
         if not isinstance(message, dict):
             return
@@ -248,24 +280,83 @@ class TelegramBotRunner:
             self._client.send_message(chat_id, build_help_text())
             return
 
+        request_id = self._create_pending_request(chat_id, normalized)
+        self._client.send_message(
+            chat_id,
+            build_mode_selection_text(),
+            reply_markup=_build_mode_selection_markup(request_id),
+        )
+
+    def _handle_callback_query(self, callback_query: dict[str, Any]) -> None:
+        callback_id = str(callback_query.get("id") or "")
+        data = str(callback_query.get("data") or "")
+        message = callback_query.get("message") or {}
+        chat = message.get("chat") or {}
+        from_user = callback_query.get("from") or {}
+        chat_id = int(chat.get("id") or from_user.get("id") or 0)
+
+        if self._bot_settings.allowed_chat_ids and chat_id not in self._bot_settings.allowed_chat_ids:
+            logger.info("telegram bot ignored unauthorized callback chat_id=%s", chat_id)
+            if callback_id:
+                self._client.answer_callback_query(callback_id, text="当前会话未授权。", show_alert=False)
+            return
+
+        selection = _parse_callback_data(data)
+        if selection is None:
+            if callback_id:
+                self._client.answer_callback_query(callback_id, text="无效选择。", show_alert=False)
+            return
+
+        request_id, mode = selection
+        pending_request = self._pop_pending_request(request_id)
+        if pending_request is None or int(pending_request.get("chat_id") or 0) != chat_id:
+            if callback_id:
+                self._client.answer_callback_query(callback_id, text=build_mode_expired_text(), show_alert=False)
+            return
+
+        if callback_id:
+            if mode == "cancel":
+                self._client.answer_callback_query(callback_id, text="已取消。", show_alert=False)
+            else:
+                self._client.answer_callback_query(
+                    callback_id,
+                    text=f"已选择{MODE_PRESETS[mode]['label']}",
+                    show_alert=False,
+                )
+
+        message_id = message.get("message_id")
+        if message_id is not None:
+            try:
+                self._client.edit_message_reply_markup(chat_id, int(message_id), reply_markup=None)
+            except Exception:
+                logger.exception("telegram bot failed to clear selection markup chat_id=%s", chat_id)
+
+        if mode == "cancel":
+            self._client.send_message(chat_id, "这条任务已取消。")
+            return
+
         thread = Thread(
             target=self._process_message_job,
-            args=(chat_id, normalized),
+            args=(chat_id, str(pending_request["raw_input"]), mode),
             daemon=True,
         )
         thread.start()
 
-    def _process_message_job(self, chat_id: int, raw_input: str) -> None:
-        logger.info("telegram bot received job chat_id=%s", chat_id)
+    def _process_message_job(self, chat_id: int, raw_input: str, mode: str) -> None:
+        logger.info("telegram bot received job chat_id=%s mode=%s", chat_id, mode)
+        resolved_settings, action, mode_label = _resolve_mode_settings(self._app_settings, mode)
         try:
-            prepared_job = prepare_job(raw_input, self._app_settings, action="run")
+            prepared_job = prepare_job(raw_input, resolved_settings, action=action)
         except Exception as exc:
             error_info = classify_exception(exc)
             logger.exception("telegram bot failed to prepare job chat_id=%s", chat_id)
             self._client.send_message(chat_id, build_failure_text(error_info.message, error_info.hint))
             return
 
-        self._client.send_message(chat_id, build_job_received_text(prepared_job.job_dir.name))
+        self._client.send_message(
+            chat_id,
+            build_job_started_text(prepared_job.job_dir.name, mode_label=mode_label, action=action),
+        )
         progress_reporter = TelegramProgressReporter(
             self._client,
             chat_id,
@@ -275,7 +366,7 @@ class TelegramBotRunner:
         try:
             manifest = run_prepared_job(
                 prepared_job,
-                self._app_settings,
+                resolved_settings,
                 status_callback=progress_reporter.handle_manifest,
             )
         except Exception as exc:
@@ -318,6 +409,26 @@ class TelegramBotRunner:
             except Exception as exc:
                 self._client.send_message(chat_id, build_document_send_failed_text(exc))
 
+    def _create_pending_request(self, chat_id: int, raw_input: str) -> str:
+        pending_requests = dict(self._state.get("pending_requests") or {})
+        pending_requests = _prune_pending_requests(pending_requests)
+        request_id = uuid.uuid4().hex[:10]
+        pending_requests[request_id] = {
+            "chat_id": chat_id,
+            "raw_input": raw_input,
+            "created_at": time(),
+        }
+        self._state["pending_requests"] = pending_requests
+        _save_state(self._bot_settings.state_path, self._state)
+        return request_id
+
+    def _pop_pending_request(self, request_id: str) -> Optional[dict[str, Any]]:
+        pending_requests = dict(self._state.get("pending_requests") or {})
+        pending_request = pending_requests.pop(request_id, None)
+        self._state["pending_requests"] = pending_requests
+        _save_state(self._bot_settings.state_path, self._state)
+        return pending_request
+
 
 class TelegramBotClient:
     def __init__(self, settings: TelegramBotSettings) -> None:
@@ -348,16 +459,52 @@ class TelegramBotClient:
             raise RuntimeError("Telegram Bot API returned unexpected getUpdates payload.")
         return result
 
-    def send_message(self, chat_id: int, text: str) -> dict[str, Any]:
+    def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        reply_markup: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         safe_text = truncate_text(text, DEFAULT_MESSAGE_LIMIT)
-        return self._json_request(
-            "sendMessage",
-            payload={
-                "chat_id": chat_id,
-                "text": safe_text,
-                "disable_web_page_preview": True,
-            },
-        )
+        payload = {
+            "chat_id": chat_id,
+            "text": safe_text,
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        return self._json_request("sendMessage", payload=payload)
+
+    def answer_callback_query(
+        self,
+        callback_query_id: str,
+        *,
+        text: Optional[str] = None,
+        show_alert: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "callback_query_id": callback_query_id,
+            "show_alert": show_alert,
+        }
+        if text:
+            payload["text"] = truncate_text(text, 180)
+        return self._json_request("answerCallbackQuery", payload=payload)
+
+    def edit_message_reply_markup(
+        self,
+        chat_id: int,
+        message_id: int,
+        *,
+        reply_markup: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        return self._json_request("editMessageReplyMarkup", payload=payload)
 
     def send_document(
         self,
@@ -469,17 +616,23 @@ def _extract_message_text(message: dict[str, Any]) -> str:
 
 def _load_state(state_path: Path) -> dict[str, Any]:
     if not state_path.exists():
-        return {"offset": None}
+        return {"offset": None, "pending_requests": {}}
 
     try:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"offset": None}
+        return {"offset": None, "pending_requests": {}}
 
     if not isinstance(payload, dict):
-        return {"offset": None}
+        return {"offset": None, "pending_requests": {}}
 
-    return {"offset": payload.get("offset")}
+    pending_requests = payload.get("pending_requests")
+    if not isinstance(pending_requests, dict):
+        pending_requests = {}
+    return {
+        "offset": payload.get("offset"),
+        "pending_requests": _prune_pending_requests(pending_requests),
+    }
 
 
 def _save_state(state_path: Path, payload: dict[str, Any]) -> None:
@@ -504,6 +657,77 @@ def _normalize_public_base_url(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
     return value.rstrip("/")
+
+
+def _build_mode_selection_markup(request_id: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "快速转写", "callback_data": f"{CALLBACK_PREFIX}fast:{request_id}"},
+                {"text": "高精度转写", "callback_data": f"{CALLBACK_PREFIX}accurate:{request_id}"},
+            ],
+            [
+                {"text": "只下载视频", "callback_data": f"{CALLBACK_PREFIX}download:{request_id}"},
+                {"text": "取消", "callback_data": f"{CALLBACK_PREFIX}cancel:{request_id}"},
+            ],
+        ]
+    }
+
+
+def _parse_callback_data(data: str) -> Optional[tuple[str, str]]:
+    if not data.startswith(CALLBACK_PREFIX):
+        return None
+    payload = data[len(CALLBACK_PREFIX):]
+    mode, separator, request_id = payload.partition(":")
+    if not separator or not request_id:
+        return None
+    if mode not in {*MODE_PRESETS.keys(), "cancel"}:
+        return None
+    return request_id, mode
+
+
+def _prune_pending_requests(pending_requests: dict[str, Any]) -> dict[str, Any]:
+    normalized_items: list[tuple[str, dict[str, Any]]] = []
+    for request_id, payload in pending_requests.items():
+        if not isinstance(payload, dict):
+            continue
+        raw_input = str(payload.get("raw_input") or "").strip()
+        chat_id = payload.get("chat_id")
+        created_at = float(payload.get("created_at") or 0.0)
+        if not raw_input or not chat_id:
+            continue
+        normalized_items.append(
+            (
+                str(request_id),
+                {
+                    "chat_id": int(chat_id),
+                    "raw_input": raw_input,
+                    "created_at": created_at,
+                },
+            )
+        )
+
+    normalized_items.sort(key=lambda item: item[1]["created_at"], reverse=True)
+    return dict(normalized_items[:MAX_PENDING_SELECTIONS])
+
+
+def _resolve_mode_settings(base_settings: Settings, mode: str) -> tuple[Settings, str, str]:
+    preset = MODE_PRESETS[mode]
+    action = str(preset["action"])
+    label = str(preset["label"])
+    if action == "download":
+        return base_settings, action, label
+
+    return (
+        replace(
+            base_settings,
+            whisper_model=str(preset["whisper_model"]),
+            whisper_language=str(preset["whisper_language"]),
+            whisper_beam_size=int(preset["whisper_beam_size"]),
+        ),
+        action,
+        label,
+    )
 
 
 class TelegramProgressReporter:

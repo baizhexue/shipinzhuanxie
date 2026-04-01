@@ -24,17 +24,21 @@ def _make_settings(output_dir: Path) -> Settings:
         whisper_model="small",
         whisper_device="cpu",
         openclaw_token=None,
+        whisper_language=None,
+        whisper_beam_size=5,
     )
 
 
 class FakeTelegramClient:
     def __init__(self) -> None:
-        self.messages: list[tuple[int, str]] = []
+        self.messages: list[tuple[int, str, Optional[dict]]] = []
         self.documents: list[tuple[int, Path, Optional[str]]] = []
+        self.callback_answers: list[tuple[str, Optional[str], bool]] = []
+        self.cleared_markups: list[tuple[int, int]] = []
 
-    def send_message(self, chat_id: int, text: str) -> dict:
-        self.messages.append((chat_id, text))
-        return {"ok": True}
+    def send_message(self, chat_id: int, text: str, *, reply_markup: Optional[dict] = None) -> dict:
+        self.messages.append((chat_id, text, reply_markup))
+        return {"ok": True, "message_id": 9001}
 
     def send_document(
         self,
@@ -54,6 +58,14 @@ class FakeTelegramClient:
 
     def get_updates(self, *, offset, timeout, allowed_updates):
         return []
+
+    def answer_callback_query(self, callback_query_id: str, *, text: Optional[str] = None, show_alert: bool = False) -> dict:
+        self.callback_answers.append((callback_query_id, text, show_alert))
+        return {"ok": True}
+
+    def edit_message_reply_markup(self, chat_id: int, message_id: int, *, reply_markup: Optional[dict] = None) -> dict:
+        self.cleared_markups.append((chat_id, message_id))
+        return {"ok": True}
 
 
 class DummyThread:
@@ -103,9 +115,9 @@ class TelegramBotTests(unittest.TestCase):
                 client,
             )
             runner._handle_update({"message": {"chat": {"id": 1001}, "text": "/web"}})
-            self.assertEqual(client.messages, [(1001, "http://127.0.0.1:8000")])
+            self.assertEqual(client.messages, [(1001, "http://127.0.0.1:8000", None)])
 
-    def test_valid_link_starts_background_job_thread(self) -> None:
+    def test_valid_link_sends_mode_selection_instead_of_starting_job_immediately(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             client = FakeTelegramClient()
             runner = TelegramBotRunner(
@@ -126,9 +138,85 @@ class TelegramBotTests(unittest.TestCase):
                     {"message": {"chat": {"id": 1001}, "text": "https://v.douyin.com/test/"}}
                 )
 
-            self.assertEqual(client.messages, [])
+            self.assertEqual(len(client.messages), 1)
+            chat_id, text, reply_markup = client.messages[0]
+            self.assertEqual(chat_id, 1001)
+            self.assertIn("请选择这条任务的处理方式", text)
+            self.assertIsNotNone(reply_markup)
+            self.assertEqual(len(DummyThread.instances), 0)
+            self.assertEqual(len(runner._state["pending_requests"]), 1)
+
+    def test_callback_query_starts_background_job_with_selected_mode(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(Path(tmp_dir)),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=Path(tmp_dir) / "state.json",
+                ),
+                client,
+            )
+            runner._state["pending_requests"] = {
+                "req-1": {
+                    "chat_id": 1001,
+                    "raw_input": "https://v.douyin.com/test/",
+                    "created_at": 1.0,
+                }
+            }
+            with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
+                runner._handle_update(
+                    {
+                        "callback_query": {
+                            "id": "cb-1",
+                            "data": "txmode:accurate:req-1",
+                            "from": {"id": 1001},
+                            "message": {
+                                "message_id": 5001,
+                                "chat": {"id": 1001},
+                            },
+                        }
+                    }
+                )
+
             self.assertEqual(len(DummyThread.instances), 1)
             self.assertTrue(DummyThread.instances[0].started)
+            self.assertEqual(DummyThread.instances[0].args, (1001, "https://v.douyin.com/test/", "accurate"))
+            self.assertEqual(client.callback_answers, [("cb-1", "已选择高精度转写", False)])
+            self.assertEqual(client.cleared_markups, [(1001, 5001)])
+            self.assertEqual(runner._state["pending_requests"], {})
+
+    def test_expired_callback_query_returns_expired_message(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(Path(tmp_dir)),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=Path(tmp_dir) / "state.json",
+                ),
+                client,
+            )
+
+            runner._handle_update(
+                {
+                    "callback_query": {
+                        "id": "cb-1",
+                        "data": "txmode:fast:req-missing",
+                        "from": {"id": 1001},
+                        "message": {
+                            "message_id": 5001,
+                            "chat": {"id": 1001},
+                        },
+                    }
+                }
+            )
+
+            self.assertEqual(client.callback_answers, [("cb-1", "这个选择已经失效了，请重新发送一次链接。", False)])
 
     def test_progress_reporter_sends_phase_and_progress_updates(self) -> None:
         client = FakeTelegramClient()

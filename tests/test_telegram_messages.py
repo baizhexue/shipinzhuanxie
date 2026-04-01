@@ -8,7 +8,10 @@ from douyin_pipeline.telegram_messages import (
     build_failure_manifest_text,
     build_failure_text,
     build_help_text,
+    build_job_started_text,
     build_job_received_text,
+    build_mode_expired_text,
+    build_mode_selection_text,
     build_public_links,
     build_success_summary_text,
     build_transcript_caption,
@@ -28,6 +31,7 @@ class TelegramMessagesTests(unittest.TestCase):
         self.assertIn("抖音", text)
         self.assertIn("小红书", text)
         self.assertIn("/help", text)
+        self.assertIn("先让你选择处理模式", text)
 
     def test_build_web_missing_text_is_chinese(self) -> None:
         self.assertEqual(build_web_missing_text(), "网页地址还没有配置。")
@@ -37,6 +41,25 @@ class TelegramMessagesTests(unittest.TestCase):
 
         self.assertIn("已收到任务", text)
         self.assertIn("job-123", text)
+
+    def test_build_mode_selection_text_is_actionable(self) -> None:
+        text = build_mode_selection_text()
+
+        self.assertIn("快速转写", text)
+        self.assertIn("高精度转写", text)
+        self.assertIn("只下载视频", text)
+
+    def test_build_mode_expired_text_is_chinese(self) -> None:
+        self.assertEqual(build_mode_expired_text(), "这个选择已经失效了，请重新发送一次链接。")
+
+    def test_build_job_started_text_mentions_mode(self) -> None:
+        text = build_job_started_text("job-1", mode_label="高精度转写", action="run")
+        self.assertIn("高精度转写", text)
+        self.assertIn("正在下载并转写", text)
+
+        download_text = build_job_started_text("job-2", mode_label="只下载视频", action="download")
+        self.assertIn("只下载视频", download_text)
+        self.assertIn("正在下载视频", download_text)
 
     def test_build_failure_text_appends_hint(self) -> None:
         self.assertEqual(build_failure_text("下载失败", "检查链接"), "下载失败\n建议：检查链接")

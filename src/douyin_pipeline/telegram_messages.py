@@ -11,7 +11,7 @@ DEFAULT_TRANSCRIPT_PREVIEW_LIMIT = 3500
 def build_help_text() -> str:
     return (
         "把抖音、Bilibili、小红书、快手或 YouTube 的链接、完整分享文案发给我。\n"
-        "机器人会自动下载视频并转成文字。\n"
+        "收到链接后，我会先让你选择处理模式，再开始下载或转写。\n"
         "命令：\n"
         "/help - 查看帮助\n"
         "/web - 查看网页地址"
@@ -24,6 +24,26 @@ def build_web_missing_text() -> str:
 
 def build_job_received_text(job_id: str) -> str:
     return f"已收到任务。\n任务 ID：{job_id}\n开始下载并转写，请稍等。"
+
+
+def build_mode_selection_text() -> str:
+    return (
+        "已收到链接。\n"
+        "请选择这条任务的处理方式：\n"
+        "1. 快速转写：适合先出一版稿子\n"
+        "2. 高精度转写：更慢，但准确率更高\n"
+        "3. 只下载视频：先保存素材，不转文字"
+    )
+
+
+def build_mode_expired_text() -> str:
+    return "这个选择已经失效了，请重新发送一次链接。"
+
+
+def build_job_started_text(job_id: str, *, mode_label: str, action: str) -> str:
+    if action == "download":
+        return f"已开始处理。\n任务 ID：{job_id}\n模式：{mode_label}\n正在下载视频，请稍等。"
+    return f"已开始处理。\n任务 ID：{job_id}\n模式：{mode_label}\n正在下载并转写，请稍等。"
 
 
 def build_failure_text(message: str, hint: Optional[str]) -> str:
