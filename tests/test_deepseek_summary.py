@@ -55,7 +55,7 @@ class DeepSeekSummaryTests(unittest.TestCase):
             with self.assertRaises(SummaryError):
                 summarize_text("原文", style="general", settings=settings)
 
-    def test_summarize_text_calls_deepseek_for_direct_prompt(self) -> None:
+    def test_summarize_text_returns_title_and_body(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             settings = _make_settings(Path(tmp_dir))
             captured_requests: list[dict] = []
@@ -68,7 +68,13 @@ class DeepSeekSummaryTests(unittest.TestCase):
                         "choices": [
                             {
                                 "message": {
-                                    "content": "总结结果",
+                                    "content": json.dumps(
+                                        {
+                                            "title": "OpenClaw 技能接入",
+                                            "summary_markdown": "## 概述\n\n这是总结正文。",
+                                        },
+                                        ensure_ascii=False,
+                                    )
                                 }
                             }
                         ]
@@ -76,28 +82,45 @@ class DeepSeekSummaryTests(unittest.TestCase):
                 )
 
             with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
-                actual = summarize_text("这是一段原文。", style="general", settings=settings)
+                title, body = summarize_text("这是一段原文。", style="general", settings=settings)
 
-        self.assertEqual(actual, "总结结果")
-        self.assertEqual(captured_requests[0]["model"], "deepseek-chat")
+        self.assertEqual(title, "OpenClaw 技能接入")
+        self.assertEqual(body, "## 概述\n\n这是总结正文。")
+        self.assertEqual(captured_requests[0]["response_format"]["type"], "json_object")
         self.assertIn("原文如下", captured_requests[0]["messages"][1]["content"])
 
-    def test_summarize_to_file_writes_markdown_file(self) -> None:
+    def test_summarize_to_file_uses_ai_title_for_markdown_and_filename(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             settings = _make_settings(root)
             with patch(
                 "urllib.request.urlopen",
                 return_value=_FakeResponse(
-                    {"choices": [{"message": {"content": "总结结果"}}]}
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "title": "OpenClaw 技能接入说明",
+                                            "summary_markdown": "## 概述\n\n这是总结结果。",
+                                        },
+                                        ensure_ascii=False,
+                                    )
+                                }
+                            }
+                        ]
+                    }
                 ),
             ):
                 result = summarize_to_file("原文", style="plain", job_dir=root, settings=settings)
-                written_text = result.summary_path.read_text(encoding="utf-8").strip()
+                written_text = result.summary_path.read_text(encoding="utf-8")
 
-            self.assertEqual(result.text, "总结结果")
-            self.assertTrue(result.summary_path.name.endswith("summary-plain.md"))
-            self.assertEqual(written_text, "总结结果")
+        self.assertEqual(result.title, "OpenClaw 技能接入说明")
+        self.assertIn("OpenClaw 技能接入说明", result.summary_path.name)
+        self.assertIn("大白话总结", result.summary_path.name)
+        self.assertTrue(written_text.startswith("# OpenClaw 技能接入说明"))
+        self.assertIn("这是总结结果。", written_text)
 
 
 if __name__ == "__main__":

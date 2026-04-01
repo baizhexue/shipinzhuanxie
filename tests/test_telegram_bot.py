@@ -7,6 +7,7 @@ from unittest.mock import patch
 from typing import Optional
 
 from douyin_pipeline.config import Settings
+from douyin_pipeline.deepseek_summary import SummaryResult
 from douyin_pipeline.telegram_bot import (
     TelegramBotRunner,
     TelegramBotSettings,
@@ -130,7 +131,7 @@ class TelegramBotTests(unittest.TestCase):
             runner._handle_update({"message": {"chat": {"id": 1001}, "text": "/web"}})
             self.assertEqual(client.messages, [(1001, "http://127.0.0.1:4444", None)])
 
-    def test_valid_link_sends_mode_selection_instead_of_starting_job_immediately(self) -> None:
+    def test_valid_link_sends_mode_selection(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             client = FakeTelegramClient()
             runner = TelegramBotRunner(
@@ -152,18 +153,16 @@ class TelegramBotTests(unittest.TestCase):
                 )
 
             self.assertEqual(len(client.messages), 1)
-            chat_id, text, reply_markup = client.messages[0]
-            self.assertEqual(chat_id, 1001)
-            self.assertIn("请选择这条任务的处理方式", text)
-            self.assertIsNotNone(reply_markup)
+            self.assertIn("请选择这条任务的处理方式", client.messages[0][1])
+            self.assertIsNotNone(client.messages[0][2])
             self.assertEqual(len(DummyThread.instances), 0)
             self.assertEqual(len(runner._state["pending_requests"]), 1)
 
-    def test_callback_query_starts_background_job_with_selected_mode(self) -> None:
+    def test_download_mode_starts_immediately_without_summary_step(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             client = FakeTelegramClient()
             runner = TelegramBotRunner(
-                _make_settings(Path(tmp_dir)),
+                _make_settings(Path(tmp_dir), deepseek_api_key="secret"),
                 TelegramBotSettings(
                     token="token",
                     allowed_chat_ids=(1001,),
@@ -173,39 +172,29 @@ class TelegramBotTests(unittest.TestCase):
                 client,
             )
             runner._state["pending_requests"] = {
-                "req-1": {
-                    "chat_id": 1001,
-                    "raw_input": "https://v.douyin.com/test/",
-                    "created_at": 1.0,
-                }
+                "req-1": {"chat_id": 1001, "raw_input": "https://v.douyin.com/test/", "created_at": 1.0}
             }
             with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
                 runner._handle_update(
                     {
                         "callback_query": {
                             "id": "cb-1",
-                            "data": "txmode:accurate:req-1",
+                            "data": "txmode:download:req-1",
                             "from": {"id": 1001},
-                            "message": {
-                                "message_id": 5001,
-                                "chat": {"id": 1001},
-                            },
+                            "message": {"message_id": 5001, "chat": {"id": 1001}},
                         }
                     }
                 )
 
+            self.assertEqual(client.callback_answers, [("cb-1", "已选择只下载视频", False)])
             self.assertEqual(len(DummyThread.instances), 1)
-            self.assertTrue(DummyThread.instances[0].started)
-            self.assertEqual(DummyThread.instances[0].args, (1001, "https://v.douyin.com/test/", "accurate"))
-            self.assertEqual(client.callback_answers, [("cb-1", "已选择高精度转写", False)])
-            self.assertEqual(client.cleared_markups, [(1001, 5001)])
-            self.assertEqual(runner._state["pending_requests"], {})
+            self.assertEqual(DummyThread.instances[0].args, (1001, "https://v.douyin.com/test/", "download", None))
 
-    def test_expired_callback_query_returns_expired_message(self) -> None:
+    def test_summary_selection_is_front_loaded_after_run_mode(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             client = FakeTelegramClient()
             runner = TelegramBotRunner(
-                _make_settings(Path(tmp_dir)),
+                _make_settings(Path(tmp_dir), deepseek_api_key="secret"),
                 TelegramBotSettings(
                     token="token",
                     allowed_chat_ids=(1001,),
@@ -214,24 +203,142 @@ class TelegramBotTests(unittest.TestCase):
                 ),
                 client,
             )
-
-            runner._handle_update(
-                {
-                    "callback_query": {
-                        "id": "cb-1",
-                        "data": "txmode:fast:req-missing",
-                        "from": {"id": 1001},
-                        "message": {
-                            "message_id": 5001,
-                            "chat": {"id": 1001},
-                        },
+            runner._state["pending_requests"] = {
+                "req-1": {"chat_id": 1001, "raw_input": "https://v.douyin.com/test/", "created_at": 1.0}
+            }
+            with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
+                runner._handle_update(
+                    {
+                        "callback_query": {
+                            "id": "cb-1",
+                            "data": "txmode:accurate:req-1",
+                            "from": {"id": 1001},
+                            "message": {"message_id": 5001, "chat": {"id": 1001}},
+                        }
                     }
+                )
+
+            self.assertEqual(client.callback_answers, [("cb-1", "已选择高精度转写", False)])
+            self.assertEqual(len(DummyThread.instances), 0)
+            self.assertIn("自动总结", client.messages[-1][1])
+            self.assertIsNotNone(client.messages[-1][2])
+            self.assertEqual(len(runner._state["pending_summaries"]), 1)
+
+    def test_summary_callback_starts_job_with_selected_summary_style(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(Path(tmp_dir), deepseek_api_key="secret"),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=Path(tmp_dir) / "state.json",
+                ),
+                client,
+            )
+            runner._state["pending_summaries"] = {
+                "sum-1": {
+                    "chat_id": 1001,
+                    "raw_input": "https://v.douyin.com/test/",
+                    "mode": "accurate",
+                    "created_at": 1.0,
                 }
+            }
+            with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
+                runner._handle_update(
+                    {
+                        "callback_query": {
+                            "id": "cb-2",
+                            "data": "txsummary:plain:sum-1",
+                            "from": {"id": 1001},
+                            "message": {"message_id": 5002, "chat": {"id": 1001}},
+                        }
+                    }
+                )
+
+            self.assertEqual(client.callback_answers, [("cb-2", "已选择大白话总结", False)])
+            self.assertEqual(len(DummyThread.instances), 1)
+            self.assertEqual(
+                DummyThread.instances[0].args,
+                (1001, "https://v.douyin.com/test/", "accurate", "plain"),
             )
 
-            self.assertEqual(client.callback_answers, [("cb-1", "这个选择已经失效了，请重新发送一次链接。", False)])
+    def test_summary_callback_can_skip_summary_and_still_start_job(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(Path(tmp_dir), deepseek_api_key="secret"),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=Path(tmp_dir) / "state.json",
+                ),
+                client,
+            )
+            runner._state["pending_summaries"] = {
+                "sum-1": {
+                    "chat_id": 1001,
+                    "raw_input": "https://v.douyin.com/test/",
+                    "mode": "fast",
+                    "created_at": 1.0,
+                }
+            }
+            with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
+                runner._handle_update(
+                    {
+                        "callback_query": {
+                            "id": "cb-3",
+                            "data": "txsummary:skip:sum-1",
+                            "from": {"id": 1001},
+                            "message": {"message_id": 5003, "chat": {"id": 1001}},
+                        }
+                    }
+                )
 
-    def test_send_success_with_transcript_and_deepseek_prompts_for_summary(self) -> None:
+            self.assertEqual(client.callback_answers, [("cb-3", "已跳过总结，将直接开始任务。", False)])
+            self.assertEqual(len(DummyThread.instances), 1)
+            self.assertEqual(
+                DummyThread.instances[0].args,
+                (1001, "https://v.douyin.com/test/", "fast", None),
+            )
+
+    def test_process_message_job_includes_summary_label_when_selected(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            job_dir = output_dir / "job-1"
+            job_dir.mkdir(parents=True)
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(output_dir, deepseek_api_key="secret"),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=output_dir / "state.json",
+                ),
+                client,
+            )
+
+            with patch("douyin_pipeline.telegram_bot.prepare_job") as prepare_job, patch(
+                "douyin_pipeline.telegram_bot.run_prepared_job"
+            ) as run_prepared_job, patch(
+                "douyin_pipeline.telegram_bot.TelegramProgressReporter"
+            ):
+                prepared_job = type("Prepared", (), {"job_dir": job_dir, "action": "run"})()
+                prepare_job.return_value = prepared_job
+                run_prepared_job.return_value = {"job_id": "job-1", "status": "success"}
+                with patch.object(runner, "_send_success") as send_success, patch.object(
+                    runner, "_process_summary_job"
+                ) as process_summary_job:
+                    runner._process_message_job(1001, "https://v.douyin.com/test/", "fast", "knowledge")
+
+            self.assertIn("总结：知识型", client.messages[0][1])
+            send_success.assert_called_once()
+            process_summary_job.assert_called_once_with(1001, "job-1", "knowledge")
+
+    def test_send_success_no_longer_prompts_for_summary(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir)
             job_dir = output_dir / "job-1"
@@ -258,105 +365,19 @@ class TelegramBotTests(unittest.TestCase):
                     "title": "demo",
                     "transcript_path": "job-1/demo.txt",
                     "transcript_preview": "hello world",
-                    "files": [],
                 },
             )
 
             self.assertEqual(len(client.documents), 1)
-            self.assertIn("要不要继续做总结", client.messages[-1][1])
-            self.assertIsNotNone(client.messages[-1][2])
-            self.assertEqual(len(runner._state["pending_summaries"]), 1)
+            self.assertEqual(len(runner._state["pending_summaries"]), 0)
+            self.assertNotIn("自动总结", client.messages[-1][1])
 
-    def test_summary_callback_query_starts_background_summary(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
-            client = FakeTelegramClient()
-            runner = TelegramBotRunner(
-                _make_settings(Path(tmp_dir), deepseek_api_key="secret"),
-                TelegramBotSettings(
-                    token="token",
-                    allowed_chat_ids=(1001,),
-                    public_base_url=None,
-                    state_path=Path(tmp_dir) / "state.json",
-                ),
-                client,
-            )
-            runner._state["pending_summaries"] = {
-                "sum-1": {
-                    "chat_id": 1001,
-                    "job_id": "job-1",
-                    "created_at": 1.0,
-                }
-            }
-
-            with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
-                runner._handle_update(
-                    {
-                        "callback_query": {
-                            "id": "cb-2",
-                            "data": "txsummary:plain:sum-1",
-                            "from": {"id": 1001},
-                            "message": {
-                                "message_id": 5002,
-                                "chat": {"id": 1001},
-                            },
-                        }
-                    }
-                )
-
-            self.assertEqual(len(DummyThread.instances), 1)
-            self.assertEqual(DummyThread.instances[0].args, (1001, "job-1", "plain"))
-            self.assertEqual(client.callback_answers, [("cb-2", "已选择大白话总结", False)])
-            self.assertEqual(client.cleared_markups, [(1001, 5002)])
-            self.assertEqual(runner._state["pending_summaries"], {})
-
-    def test_summary_callback_can_be_skipped(self) -> None:
-        with TemporaryDirectory() as tmp_dir:
-            client = FakeTelegramClient()
-            runner = TelegramBotRunner(
-                _make_settings(Path(tmp_dir), deepseek_api_key="secret"),
-                TelegramBotSettings(
-                    token="token",
-                    allowed_chat_ids=(1001,),
-                    public_base_url=None,
-                    state_path=Path(tmp_dir) / "state.json",
-                ),
-                client,
-            )
-            runner._state["pending_summaries"] = {
-                "sum-1": {
-                    "chat_id": 1001,
-                    "job_id": "job-1",
-                    "created_at": 1.0,
-                }
-            }
-
-            with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
-                runner._handle_update(
-                    {
-                        "callback_query": {
-                            "id": "cb-3",
-                            "data": "txsummary:skip:sum-1",
-                            "from": {"id": 1001},
-                            "message": {
-                                "message_id": 5003,
-                                "chat": {"id": 1001},
-                            },
-                        }
-                    }
-                )
-
-            self.assertEqual(len(DummyThread.instances), 0)
-            self.assertEqual(client.callback_answers, [("cb-3", "已跳过总结。", False)])
-            self.assertEqual(client.messages[-1], (1001, "已跳过总结。\n任务 ID：job-1", None))
-
-    def test_process_summary_job_sends_summary_text_and_document(self) -> None:
+    def test_process_summary_job_sends_title_and_document(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir)
             job_dir = output_dir / "job-1"
             job_dir.mkdir(parents=True)
-            transcript_path = job_dir / "demo.txt"
-            transcript_path.write_text("原文", encoding="utf-8")
-            summary_path = job_dir / "summary-general.md"
+            summary_path = job_dir / "OpenClaw 技能接入说明-通用总结.md"
             client = FakeTelegramClient()
             runner = TelegramBotRunner(
                 _make_settings(output_dir, deepseek_api_key="secret"),
@@ -368,14 +389,8 @@ class TelegramBotTests(unittest.TestCase):
                 ),
                 client,
             )
-            manifest = {
-                "job_id": "job-1",
-                "status": "success",
-                "transcript_path": "job-1/demo.txt",
-            }
-            from douyin_pipeline.deepseek_summary import SummaryResult
 
-            with patch("douyin_pipeline.telegram_bot.read_manifest", return_value=dict(manifest)), patch(
+            with patch("douyin_pipeline.telegram_bot.read_manifest", return_value={"job_id": "job-1"}), patch(
                 "douyin_pipeline.telegram_bot.read_transcript_text",
                 return_value="原文",
             ), patch(
@@ -383,26 +398,23 @@ class TelegramBotTests(unittest.TestCase):
                 return_value=SummaryResult(
                     style="general",
                     label="通用",
-                    text="第一段\n第二段",
+                    title="OpenClaw 技能接入说明",
+                    text="## 概述\n\n这是总结正文。",
+                    markdown="# OpenClaw 技能接入说明\n\n## 概述\n\n这是总结正文。",
                     summary_path=summary_path,
                 ),
             ):
                 runner._process_summary_job(1001, "job-1", "general")
 
             self.assertIn("已开始总结", client.messages[0][1])
-            self.assertEqual(client.messages[1], (1001, "第一段\n第二段", None))
-            self.assertEqual(client.documents[-1], (1001, summary_path, "通用总结 - job-1"))
+            self.assertIn("标题：OpenClaw 技能接入说明", client.messages[1][1])
+            self.assertIn("## 概述", client.messages[2][1])
+            self.assertEqual(client.documents[-1], (1001, summary_path, "通用总结 - OpenClaw 技能接入说明"))
 
     def test_progress_reporter_sends_phase_and_progress_updates(self) -> None:
         client = FakeTelegramClient()
         reporter = TelegramProgressReporter(client, 1001, enabled=True)
-        reporter.handle_manifest(
-            {
-                "job_id": "job-1",
-                "status": "downloading",
-                "phase": "downloading",
-            }
-        )
+        reporter.handle_manifest({"job_id": "job-1", "status": "downloading", "phase": "downloading"})
 
         reporter._last_phase = "transcribing"
         reporter._last_bucket = 1

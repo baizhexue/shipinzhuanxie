@@ -12,7 +12,7 @@ DEFAULT_SUMMARY_CHUNK_LIMIT = 3400
 def build_help_text() -> str:
     return (
         "把抖音、Bilibili、小红书、快手或 YouTube 的链接、完整分享文案发给我。\n"
-        "收到链接后，我会先让你选择处理模式，再开始下载或转写。\n"
+        "收到链接后，我会先让你选择处理模式，再确认是否自动总结。\n"
         "命令：\n"
         "/help - 查看帮助\n"
         "/web - 查看网页地址"
@@ -21,10 +21,6 @@ def build_help_text() -> str:
 
 def build_web_missing_text() -> str:
     return "网页地址还没有配置。"
-
-
-def build_job_received_text(job_id: str) -> str:
-    return f"已收到任务。\n任务 ID：{job_id}\n开始下载并转写，请稍等。"
 
 
 def build_mode_selection_text() -> str:
@@ -41,17 +37,11 @@ def build_mode_expired_text() -> str:
     return "这个选择已经失效了，请重新发送一次链接。"
 
 
-def build_job_started_text(job_id: str, *, mode_label: str, action: str) -> str:
-    if action == "download":
-        return f"已开始处理。\n任务 ID：{job_id}\n模式：{mode_label}\n正在下载视频，请稍等。"
-    return f"已开始处理。\n任务 ID：{job_id}\n模式：{mode_label}\n正在下载并转写，请稍等。"
-
-
-def build_summary_selection_text(job_id: str) -> str:
+def build_summary_selection_text(mode_label: str) -> str:
     return (
-        f"任务已完成。\n任务 ID：{job_id}\n"
-        "要不要继续做总结？\n"
-        "如果要，总结风格选下面一个；如果不需要，点“跳过总结”。"
+        f"已选择：{mode_label}\n"
+        "接下来要不要自动总结？\n"
+        "如果要，总结会在转写完成后自动继续跑；如果不要，就直接只给你转写稿。"
     )
 
 
@@ -59,20 +49,42 @@ def build_summary_expired_text() -> str:
     return "这个总结选项已经失效了，请重新发送一条链接。"
 
 
+def build_job_started_text(
+    job_id: str,
+    *,
+    mode_label: str,
+    action: str,
+    summary_label: Optional[str] = None,
+) -> str:
+    lines = [
+        "已开始处理。",
+        f"任务 ID：{job_id}",
+        f"模式：{mode_label}",
+    ]
+    if summary_label:
+        lines.append(f"总结：{summary_label}")
+
+    if action == "download":
+        lines.append("正在下载视频，请稍等。")
+    else:
+        lines.append("正在下载并转写，请稍等。")
+    return "\n".join(lines)
+
+
 def build_summary_started_text(job_id: str, style_label: str) -> str:
     return f"已开始总结。\n任务 ID：{job_id}\n风格：{style_label}"
 
 
-def build_summary_skipped_text(job_id: str) -> str:
-    return f"已跳过总结。\n任务 ID：{job_id}"
+def build_summary_completed_text(job_id: str, style_label: str, title: str) -> str:
+    return f"总结已完成。\n任务 ID：{job_id}\n风格：{style_label}\n标题：{title}"
 
 
 def build_summary_failed_text(style_label: str, message: str) -> str:
     return f"{style_label}总结失败。\n原因：{message}"
 
 
-def build_summary_document_caption(job_id: str, style_label: str) -> str:
-    return f"{style_label}总结 - {job_id}"
+def build_summary_document_caption(title: str, style_label: str) -> str:
+    return f"{style_label}总结 - {title}"
 
 
 def build_failure_text(message: str, hint: Optional[str]) -> str:

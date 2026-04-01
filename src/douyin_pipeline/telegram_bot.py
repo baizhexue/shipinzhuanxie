@@ -26,18 +26,17 @@ from douyin_pipeline.pipeline import prepare_job, run_prepared_job
 from douyin_pipeline.telegram_messages import (
     DEFAULT_MESSAGE_LIMIT,
     DEFAULT_TRANSCRIPT_PREVIEW_LIMIT,
+    build_summary_completed_text,
     build_summary_document_caption,
     build_summary_expired_text,
     build_summary_failed_text,
     build_summary_selection_text,
-    build_summary_skipped_text,
     build_summary_started_text,
     build_document_send_failed_text,
     build_failure_manifest_text,
     build_failure_text,
     build_help_text,
     build_job_started_text,
-    build_job_received_text,
     build_mode_expired_text,
     build_mode_selection_text,
     build_success_summary_text,
@@ -369,12 +368,23 @@ class TelegramBotRunner:
             self._client.send_message(chat_id, "这条任务已取消。")
             return
 
-        thread = Thread(
-            target=self._process_message_job,
-            args=(chat_id, str(pending_request["raw_input"]), mode),
-            daemon=True,
+        raw_input = str(pending_request["raw_input"])
+        mode_label = str(MODE_PRESETS[mode]["label"])
+        if mode == "download" or not self._app_settings.deepseek_api_key:
+            thread = Thread(
+                target=self._process_message_job,
+                args=(chat_id, raw_input, mode, None),
+                daemon=True,
+            )
+            thread.start()
+            return
+
+        summary_request_id = self._create_pending_summary_request(chat_id, raw_input, mode)
+        self._client.send_message(
+            chat_id,
+            build_summary_selection_text(mode_label),
+            reply_markup=_build_summary_selection_markup(summary_request_id),
         )
-        thread.start()
 
     def _handle_summary_callback(
         self,
@@ -386,38 +396,43 @@ class TelegramBotRunner:
     ) -> None:
         message = callback_query.get("message") or {}
         request_id, style = selection
-        pending_summary = self._pop_pending_summary(request_id)
+        pending_summary = self._pop_pending_summary_request(request_id)
         if pending_summary is None or int(pending_summary.get("chat_id") or 0) != chat_id:
             if callback_id:
                 self._client.answer_callback_query(callback_id, text=build_summary_expired_text(), show_alert=False)
             return
 
         if callback_id:
-            if style == "skip":
-                self._client.answer_callback_query(callback_id, text="已跳过总结。", show_alert=False)
-            else:
-                self._client.answer_callback_query(
-                    callback_id,
-                    text=f"已选择{SUMMARY_STYLE_LABELS[style]}总结",
-                    show_alert=False,
-                )
+            callback_text = "已跳过总结，将直接开始任务。" if style == "skip" else f"已选择{SUMMARY_STYLE_LABELS[style]}总结"
+            self._client.answer_callback_query(callback_id, text=callback_text, show_alert=False)
 
         self._clear_callback_markup(chat_id, message)
 
-        job_id = str(pending_summary["job_id"])
-        if style == "skip":
-            self._client.send_message(chat_id, build_summary_skipped_text(job_id))
-            return
-
         thread = Thread(
-            target=self._process_summary_job,
-            args=(chat_id, job_id, style),
+            target=self._process_message_job,
+            args=(
+                chat_id,
+                str(pending_summary["raw_input"]),
+                str(pending_summary["mode"]),
+                None if style == "skip" else style,
+            ),
             daemon=True,
         )
         thread.start()
 
-    def _process_message_job(self, chat_id: int, raw_input: str, mode: str) -> None:
-        logger.info("telegram bot received job chat_id=%s mode=%s", chat_id, mode)
+    def _process_message_job(
+        self,
+        chat_id: int,
+        raw_input: str,
+        mode: str,
+        summary_style: Optional[str],
+    ) -> None:
+        logger.info(
+            "telegram bot received job chat_id=%s mode=%s summary_style=%s",
+            chat_id,
+            mode,
+            summary_style or "skip",
+        )
         resolved_settings, action, mode_label = _resolve_mode_settings(self._app_settings, mode)
         try:
             prepared_job = prepare_job(raw_input, resolved_settings, action=action)
@@ -429,7 +444,12 @@ class TelegramBotRunner:
 
         self._client.send_message(
             chat_id,
-            build_job_started_text(prepared_job.job_dir.name, mode_label=mode_label, action=action),
+            build_job_started_text(
+                prepared_job.job_dir.name,
+                mode_label=mode_label,
+                action=action,
+                summary_label=SUMMARY_STYLE_LABELS.get(summary_style) if summary_style else None,
+            ),
         )
         progress_reporter = TelegramProgressReporter(
             self._client,
@@ -454,6 +474,8 @@ class TelegramBotRunner:
 
         logger.info("telegram bot job completed chat_id=%s job_id=%s", chat_id, prepared_job.job_dir.name)
         self._send_success(chat_id, manifest)
+        if action == "run" and summary_style:
+            self._process_summary_job(chat_id, prepared_job.job_dir.name, summary_style)
 
     def _send_failure(self, chat_id: int, manifest: dict[str, Any]) -> None:
         self._client.send_message(chat_id, build_failure_manifest_text(manifest))
@@ -482,14 +504,6 @@ class TelegramBotRunner:
                 self._client.send_document(chat_id, absolute_transcript_path, caption=caption)
             except Exception as exc:
                 self._client.send_message(chat_id, build_document_send_failed_text(exc))
-
-        if absolute_transcript_path is not None and self._app_settings.deepseek_api_key:
-            summary_request_id = self._create_pending_summary(chat_id, str(public_job.get("job_id", "-")))
-            self._client.send_message(
-                chat_id,
-                build_summary_selection_text(str(public_job.get("job_id", "-"))),
-                reply_markup=_build_summary_selection_markup(summary_request_id),
-            )
 
     def _process_summary_job(self, chat_id: int, job_id: str, style: str) -> None:
         style_label = SUMMARY_STYLE_LABELS[style]
@@ -529,9 +543,14 @@ class TelegramBotRunner:
             job_id,
             status="success",
             style=style,
+            summary_title=summary_result.title,
             summary_path=summary_result.summary_path,
             summary_text=summary_result.text,
             error=None,
+        )
+        self._client.send_message(
+            chat_id,
+            build_summary_completed_text(job_id, style_label, summary_result.title),
         )
         public_job = to_public_job(updated_manifest)
         if self._bot_settings.public_base_url:
@@ -549,7 +568,7 @@ class TelegramBotRunner:
             self._client.send_document(
                 chat_id,
                 summary_result.summary_path,
-                caption=build_summary_document_caption(job_id, style_label),
+                caption=build_summary_document_caption(summary_result.title, style_label),
             )
         except Exception as exc:
             self._client.send_message(chat_id, build_document_send_failed_text(exc))
@@ -583,20 +602,21 @@ class TelegramBotRunner:
         _save_state(self._bot_settings.state_path, self._state)
         return pending_request
 
-    def _create_pending_summary(self, chat_id: int, job_id: str) -> str:
+    def _create_pending_summary_request(self, chat_id: int, raw_input: str, mode: str) -> str:
         pending_summaries = dict(self._state.get("pending_summaries") or {})
         pending_summaries = _prune_pending_summaries(pending_summaries)
         request_id = uuid.uuid4().hex[:10]
         pending_summaries[request_id] = {
             "chat_id": chat_id,
-            "job_id": job_id,
+            "raw_input": raw_input,
+            "mode": mode,
             "created_at": time(),
         }
         self._state["pending_summaries"] = pending_summaries
         _save_state(self._bot_settings.state_path, self._state)
         return request_id
 
-    def _pop_pending_summary(self, request_id: str) -> Optional[dict[str, Any]]:
+    def _pop_pending_summary_request(self, request_id: str) -> Optional[dict[str, Any]]:
         pending_summaries = dict(self._state.get("pending_summaries") or {})
         pending_summary = pending_summaries.pop(request_id, None)
         self._state["pending_summaries"] = pending_summaries
@@ -609,6 +629,7 @@ class TelegramBotRunner:
         *,
         status: str,
         style: str,
+        summary_title: Optional[str] = None,
         summary_path: Optional[Path] = None,
         summary_text: Optional[str] = None,
         error: Optional[str] = None,
@@ -621,6 +642,8 @@ class TelegramBotRunner:
         manifest["summary_status"] = status
         manifest["summary_style"] = style
         manifest["summary_error"] = error
+        if summary_title is not None:
+            manifest["summary_title"] = summary_title
         if summary_path is not None:
             manifest["summary_path"] = str(summary_path.relative_to(self._app_settings.output_dir))
         if summary_text is not None:
@@ -946,17 +969,19 @@ def _prune_pending_summaries(pending_summaries: dict[str, Any]) -> dict[str, Any
     for request_id, payload in pending_summaries.items():
         if not isinstance(payload, dict):
             continue
-        job_id = str(payload.get("job_id") or "").strip()
+        raw_input = str(payload.get("raw_input") or "").strip()
+        mode = str(payload.get("mode") or "").strip()
         chat_id = payload.get("chat_id")
         created_at = float(payload.get("created_at") or 0.0)
-        if not job_id or not chat_id:
+        if not raw_input or not mode or not chat_id:
             continue
         normalized_items.append(
             (
                 str(request_id),
                 {
                     "chat_id": int(chat_id),
-                    "job_id": job_id,
+                    "raw_input": raw_input,
+                    "mode": mode,
                     "created_at": created_at,
                 },
             )
