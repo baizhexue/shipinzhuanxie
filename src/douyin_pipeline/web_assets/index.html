@@ -201,6 +201,49 @@
           <section class="panel telegram-panel">
             <div class="section-head with-action">
               <div>
+                <span class="section-kicker">Summary</span>
+                <h2>总结提示词</h2>
+              </div>
+              <button id="resetSummaryPromptsBtn" class="ghost-button" type="button">恢复默认</button>
+            </div>
+
+            <form id="summaryPromptForm" class="stack-form">
+              <label class="field">
+                <span>通用</span>
+                <textarea
+                  id="summaryGeneralInput"
+                  rows="8"
+                  placeholder="用于标准通用版总结的提示词"
+                ></textarea>
+              </label>
+
+              <label class="field">
+                <span>大白话</span>
+                <textarea
+                  id="summaryPlainInput"
+                  rows="8"
+                  placeholder="用于大白话总结的提示词"
+                ></textarea>
+              </label>
+
+              <label class="field">
+                <span>知识型</span>
+                <textarea
+                  id="summaryKnowledgeInput"
+                  rows="8"
+                  placeholder="用于学习笔记风格总结的提示词"
+                ></textarea>
+              </label>
+
+              <div class="button-row">
+                <button id="saveSummaryPromptsBtn" class="primary-button" type="submit">保存提示词</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel telegram-panel">
+            <div class="section-head with-action">
+              <div>
                 <span class="section-kicker">Telegram</span>
                 <h2>机器人入口</h2>
               </div>

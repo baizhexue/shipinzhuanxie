@@ -13,11 +13,13 @@ from douyin_pipeline.deepseek_summary import (
     summarize_text,
     summarize_to_file,
 )
+from douyin_pipeline.runtime_config import update_summary_prompt_config
 
 
 def _make_settings(output_dir: Path) -> Settings:
+    resolved_output_dir = output_dir / "output"
     return Settings(
-        output_dir=output_dir,
+        output_dir=resolved_output_dir,
         cookies_file=None,
         cookies_from_browser=None,
         ffmpeg_cmd=("ffmpeg",),
@@ -88,6 +90,41 @@ class DeepSeekSummaryTests(unittest.TestCase):
         self.assertEqual(body, "## 概述\n\n这是总结正文。")
         self.assertEqual(captured_requests[0]["response_format"]["type"], "json_object")
         self.assertIn("原文如下", captured_requests[0]["messages"][1]["content"])
+
+    def test_summarize_text_uses_runtime_config_prompt(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            settings = _make_settings(Path(tmp_dir))
+            update_summary_prompt_config(
+                settings.output_dir,
+                {"general": "这是新的通用提示词，请特别强调结论。"},
+            )
+            captured_requests: list[dict] = []
+
+            def _fake_urlopen(request, timeout):
+                payload = json.loads(request.data.decode("utf-8"))
+                captured_requests.append(payload)
+                return _FakeResponse(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "title": "新的总结标题",
+                                            "summary_markdown": "## 概述\n\n内容。",
+                                        },
+                                        ensure_ascii=False,
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                )
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                summarize_text("这是需要总结的原文。", style="general", settings=settings)
+
+        self.assertIn("这是新的通用提示词，请特别强调结论。", captured_requests[0]["messages"][1]["content"])
 
     def test_summarize_to_file_uses_ai_title_for_markdown_and_filename(self) -> None:
         with TemporaryDirectory() as tmp_dir:

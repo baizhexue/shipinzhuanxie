@@ -30,6 +30,11 @@ from douyin_pipeline.pipeline import (
     prepare_job,
     process_job,
 )
+from douyin_pipeline.runtime_config import (
+    load_summary_prompt_config,
+    summary_prompt_config_to_public_payload,
+    update_summary_prompt_config,
+)
 from douyin_pipeline.web_jobs import (
     can_transcribe_manifest,
     delete_job_payload,
@@ -311,6 +316,36 @@ def create_app(settings: Optional[Settings] = None):
     @app.get("/api/settings/telegram")
     async def telegram_settings() -> dict[str, Any]:
         return await run_in_threadpool(app.state.telegram_manager.get_public_state)
+
+    @app.get("/api/settings/summary-prompts")
+    async def summary_prompt_settings() -> dict[str, Any]:
+        config = await run_in_threadpool(load_summary_prompt_config, app.state.settings.output_dir)
+        return summary_prompt_config_to_public_payload(config)
+
+    @app.put("/api/settings/summary-prompts")
+    async def save_summary_prompt_settings(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            config = await run_in_threadpool(
+                update_summary_prompt_config,
+                app.state.settings.output_dir,
+                payload,
+            )
+            return summary_prompt_config_to_public_payload(config)
+        except ValueError as exc:
+            return error_response(
+                JSONResponse,
+                status_code=400,
+                detail=str(exc),
+                code="summary_prompt_invalid",
+            )
+        except Exception as exc:
+            return error_response(
+                JSONResponse,
+                status_code=500,
+                detail="总结提示词保存失败。",
+                code="summary_prompt_save_failed",
+                hint=str(exc),
+            )
 
     @app.put("/api/settings/telegram")
     async def save_telegram_settings(payload: dict[str, Any]) -> dict[str, Any]:

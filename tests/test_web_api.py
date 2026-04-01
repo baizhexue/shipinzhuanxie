@@ -362,6 +362,41 @@ class WebApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["error_code"], "telegram_token_missing")
 
+    def test_summary_prompt_settings_return_defaults(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            isolated_output = Path(tmp_dir) / "output"
+            with TestClient(create_app(_make_settings(isolated_output))) as client:
+                response = client.get("/api/settings/summary-prompts")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("请阅读以下内容", payload["general"])
+        self.assertIn("总结成“人话”", payload["plain"])
+        self.assertIn("适合学习和复盘的笔记", payload["knowledge"])
+        self.assertIn("defaults", payload)
+
+    def test_summary_prompt_settings_can_be_updated(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            isolated_output = Path(tmp_dir) / "output"
+            with TestClient(create_app(_make_settings(isolated_output))) as client:
+                response = client.put(
+                    "/api/settings/summary-prompts",
+                    json={
+                        "general": "这是新的通用总结提示词",
+                        "plain": "这是新的大白话提示词",
+                        "knowledge": "这是新的知识型提示词",
+                    },
+                )
+                follow_up = client.get("/api/settings/summary-prompts")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["general"], "这是新的通用总结提示词")
+        self.assertEqual(payload["plain"], "这是新的大白话提示词")
+        self.assertEqual(payload["knowledge"], "这是新的知识型提示词")
+        self.assertEqual(follow_up.status_code, 200)
+        self.assertEqual(follow_up.json()["general"], "这是新的通用总结提示词")
+
     def test_telegram_start_uses_web_managed_config(self) -> None:
         with TemporaryDirectory() as tmp_dir, TestClient(create_app(_make_settings(Path(tmp_dir)))) as client:
             fake_manager = FakeTelegramManager()

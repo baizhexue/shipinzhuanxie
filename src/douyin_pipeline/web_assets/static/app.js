@@ -22,6 +22,7 @@
     activeOnly: false,
   },
   telegram: null,
+  summaryPrompts: null,
   jobCache: new Map(),
   pollTimer: null,
 };
@@ -44,6 +45,10 @@ const elements = {
   historyPager: document.getElementById("historyPager"),
   doctorList: document.getElementById("doctorList"),
   detailPanel: document.getElementById("detailPanel"),
+  summaryPromptForm: document.getElementById("summaryPromptForm"),
+  summaryGeneralInput: document.getElementById("summaryGeneralInput"),
+  summaryPlainInput: document.getElementById("summaryPlainInput"),
+  summaryKnowledgeInput: document.getElementById("summaryKnowledgeInput"),
   telegramForm: document.getElementById("telegramForm"),
   telegramRuntimeBadge: document.getElementById("telegramRuntimeBadge"),
   telegramRuntimeInfo: document.getElementById("telegramRuntimeInfo"),
@@ -56,6 +61,7 @@ const elements = {
   telegramPollTimeoutInput: document.getElementById("telegramPollTimeoutInput"),
   telegramRetryDelayInput: document.getElementById("telegramRetryDelayInput"),
   telegramProgressUpdatesInput: document.getElementById("telegramProgressUpdatesInput"),
+  resetSummaryPromptsBtn: document.getElementById("resetSummaryPromptsBtn"),
 };
 
 function escapeHtml(value) {
@@ -592,6 +598,22 @@ function renderTelegramState(payload) {
   elements.telegramRuntimeInfo.innerHTML = `<dl>${infoLines.join("")}</dl>`;
 }
 
+function renderSummaryPromptSettings(payload) {
+  state.summaryPrompts = payload;
+  elements.summaryGeneralInput.value = payload?.general || "";
+  elements.summaryPlainInput.value = payload?.plain || "";
+  elements.summaryKnowledgeInput.value = payload?.knowledge || "";
+}
+
+function collectSummaryPromptPayload(useDefaults = false) {
+  const defaults = state.summaryPrompts?.defaults || {};
+  return {
+    general: useDefaults ? defaults.general || "" : elements.summaryGeneralInput.value.trim(),
+    plain: useDefaults ? defaults.plain || "" : elements.summaryPlainInput.value.trim(),
+    knowledge: useDefaults ? defaults.knowledge || "" : elements.summaryKnowledgeInput.value.trim(),
+  };
+}
+
 function setView(viewName) {
   state.currentView = viewName;
   document.querySelectorAll(".view").forEach((section) => {
@@ -604,8 +626,13 @@ function setView(viewName) {
   if (viewName === "history") {
     loadHistory({ silent: true });
   }
-  if (viewName === "settings" && !state.telegram) {
-    loadTelegramSettings({ silent: true });
+  if (viewName === "settings") {
+    if (!state.telegram) {
+      loadTelegramSettings({ silent: true });
+    }
+    if (!state.summaryPrompts) {
+      loadSummaryPromptSettings({ silent: true });
+    }
   }
 }
 
@@ -742,6 +769,20 @@ async function loadTelegramSettings({ silent = false } = {}) {
     renderTelegramState(data);
     if (!silent) {
       showFlash("Telegram 配置已刷新");
+    }
+  } catch (error) {
+    if (!silent) {
+      showFlash(error.message, "error");
+    }
+  }
+}
+
+async function loadSummaryPromptSettings({ silent = false } = {}) {
+  try {
+    const data = await fetchJson("/api/settings/summary-prompts", {}, "总结提示词加载失败");
+    renderSummaryPromptSettings(data);
+    if (!silent) {
+      showFlash("总结提示词已刷新");
     }
   } catch (error) {
     if (!silent) {
@@ -898,6 +939,26 @@ async function saveTelegramSettings(startAfterSave = false) {
   }
 }
 
+async function saveSummaryPromptSettings(useDefaults = false) {
+  hideFlash();
+
+  try {
+    const data = await fetchJson(
+      "/api/settings/summary-prompts",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(collectSummaryPromptPayload(useDefaults)),
+      },
+      "总结提示词保存失败"
+    );
+    renderSummaryPromptSettings(data);
+    showFlash(useDefaults ? "总结提示词已恢复默认。" : "总结提示词已保存。");
+  } catch (error) {
+    showFlash(error.message, "error");
+  }
+}
+
 async function stopTelegram() {
   hideFlash();
   try {
@@ -1016,6 +1077,11 @@ elements.telegramForm.addEventListener("submit", async (event) => {
   await saveTelegramSettings(false);
 });
 
+elements.summaryPromptForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await saveSummaryPromptSettings(false);
+});
+
 document.getElementById("startTelegramBtn").addEventListener("click", async () => {
   await saveTelegramSettings(true);
 });
@@ -1024,11 +1090,16 @@ document.getElementById("stopTelegramBtn").addEventListener("click", async () =>
   await stopTelegram();
 });
 
+elements.resetSummaryPromptsBtn.addEventListener("click", async () => {
+  await saveSummaryPromptSettings(true);
+});
+
 Promise.allSettled([
   loadDashboard({ silent: true }),
   loadHistory({ silent: true }),
   loadDoctor({ silent: true }),
   loadTelegramSettings({ silent: true }),
+  loadSummaryPromptSettings({ silent: true }),
 ]).then(() => {
   renderDashboard();
   renderHistory();

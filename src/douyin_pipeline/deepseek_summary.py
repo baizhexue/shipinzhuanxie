@@ -10,6 +10,10 @@ import urllib.error
 import urllib.request
 
 from douyin_pipeline.config import Settings
+from douyin_pipeline.runtime_config import (
+    DEFAULT_SUMMARY_PROMPTS,
+    load_summary_prompt_config,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -25,37 +29,6 @@ SUMMARY_STYLE_LABELS = {
     "general": "通用",
     "plain": "大白话",
     "knowledge": "知识型",
-}
-
-SUMMARY_STYLE_PROMPTS = {
-    "general": (
-        "请阅读以下内容，并用中文帮我做一份高质量总结。\n\n"
-        "要求：\n"
-        "1. 提炼核心观点，不要遗漏关键信息；\n"
-        "2. 用清晰的结构输出，分点表述；\n"
-        "3. 先给“整体概述”，再给“重点信息”；\n"
-        "4. 如果内容里有结论、建议、风险、数据，请单独列出；\n"
-        "5. 不要胡乱补充原文没有的信息。"
-    ),
-    "plain": (
-        "你现在是一个很会提炼重点的内容助手。\n\n"
-        "请把下面内容总结成“人话”，让我一眼看懂。\n\n"
-        "输出要求：\n"
-        "- 先告诉我“这段内容主要在讲什么”；\n"
-        "- 再告诉我“最重要的几点”；\n"
-        "- 如果有结论，直接告诉我结论；\n"
-        "- 如果有建议，直接告诉我该怎么做；\n"
-        "- 尽量不要用太书面、太绕的话。"
-    ),
-    "knowledge": (
-        "请把下面内容总结成适合学习和复盘的笔记。\n\n"
-        "要求：\n"
-        "1. 提炼主题；\n"
-        "2. 拆分知识点；\n"
-        "3. 标注重点、难点、易忽略点；\n"
-        "4. 最后补一个“看完后应该记住什么”；\n"
-        "5. 输出尽量像一份高质量学习笔记。"
-    ),
 }
 
 SYSTEM_PROMPT = (
@@ -114,7 +87,7 @@ def summarize_text(transcript_text: str, *, style: str, settings: Settings) -> t
     if not cleaned_text:
         raise SummaryError("Transcript text is empty.")
 
-    base_prompt = _resolve_style_prompt(style)
+    base_prompt = _resolve_style_prompt(style, settings)
     if len(cleaned_text) <= DIRECT_SUMMARY_CHAR_LIMIT:
         return _request_titled_summary(
             settings,
@@ -156,11 +129,19 @@ def get_summary_style_label(style: str) -> str:
         raise SummaryError(f"Unsupported summary style: {style}") from exc
 
 
-def _resolve_style_prompt(style: str) -> str:
-    try:
-        return SUMMARY_STYLE_PROMPTS[style]
-    except KeyError as exc:
-        raise SummaryError(f"Unsupported summary style: {style}") from exc
+def _resolve_style_prompt(style: str, settings: Settings) -> str:
+    prompt_config = load_summary_prompt_config(settings.output_dir)
+    prompt_mapping = {
+        "general": prompt_config.general,
+        "plain": prompt_config.plain,
+        "knowledge": prompt_config.knowledge,
+    }
+    prompt = prompt_mapping.get(style)
+    if prompt:
+        return prompt
+    if style in DEFAULT_SUMMARY_PROMPTS:
+        return DEFAULT_SUMMARY_PROMPTS[style]
+    raise SummaryError(f"Unsupported summary style: {style}")
 
 
 def _build_direct_prompt(base_prompt: str, transcript_text: str) -> str:
@@ -188,7 +169,7 @@ def _build_summary_filename(style: str, title: str) -> str:
 def _sanitize_filename(value: str) -> str:
     sanitized = value.replace("\n", " ").replace("\r", " ").replace("\t", " ")
     sanitized = re.sub(r'[<>:"/\\|?*]+', " ", sanitized).strip().strip(".")
-    sanitized = re.sub(r"\\s+", " ", sanitized)
+    sanitized = re.sub(r"\s+", " ", sanitized)
     return sanitized[:80].strip()
 
 
