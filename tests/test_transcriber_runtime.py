@@ -8,8 +8,10 @@ from unittest.mock import patch
 
 from douyin_pipeline.config import Settings
 from douyin_pipeline.transcriber import (
+    TRANSCRIBING_BASE_PROGRESS_PERCENT,
     _build_transcribe_options,
     _create_whisper_model,
+    _emit_segment_progress,
     _run_transcription_with_fallback,
 )
 
@@ -104,6 +106,19 @@ class WhisperRuntimeFallbackTests(unittest.TestCase):
         self.assertEqual(options['beam_size'], 6)
         self.assertEqual(options['language'], 'zh')
         self.assertIn('简体中文', options['initial_prompt'])
+
+    def test_segment_progress_starts_from_lower_base_percent(self) -> None:
+        payloads = []
+
+        _emit_segment_progress(
+            payloads.append,
+            processed_seconds=10.0,
+            total_duration=100.0,
+            started_at=0.0,
+        )
+
+        self.assertGreaterEqual(payloads[0]["progress_percent"], TRANSCRIBING_BASE_PROGRESS_PERCENT)
+        self.assertLess(payloads[0]["progress_percent"], 30.0)
 
 
 if __name__ == '__main__':

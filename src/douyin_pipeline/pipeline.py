@@ -17,7 +17,11 @@ from douyin_pipeline.pipeline_manifest import (
     merge_existing_manifest,
     write_manifest_with_callback,
 )
-from douyin_pipeline.transcriber import TranscriptResult, transcribe_video
+from douyin_pipeline.transcriber import (
+    EXTRACT_AUDIO_PROGRESS_PERCENT,
+    TranscriptResult,
+    transcribe_video,
+)
 
 
 JobAction = Literal["download", "run"]
@@ -76,7 +80,7 @@ def transcribe_existing_job(
         error=None,
         error_info=None,
         phase="extracting_audio",
-        progress_percent=34.0,
+        progress_percent=EXTRACT_AUDIO_PROGRESS_PERCENT,
         eta_seconds=None,
         processed_seconds=0.0,
         duration_seconds=None,
@@ -236,7 +240,7 @@ def run_prepared_job(
                 error=None,
                 error_info=None,
                 phase="extracting_audio",
-                progress_percent=34.0,
+                progress_percent=EXTRACT_AUDIO_PROGRESS_PERCENT,
                 eta_seconds=None,
                 processed_seconds=0.0,
                 duration_seconds=None,

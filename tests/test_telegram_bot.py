@@ -34,6 +34,8 @@ def _make_settings(output_dir: Path, *, deepseek_api_key: Optional[str] = None) 
 class FakeTelegramClient:
     def __init__(self) -> None:
         self.messages: list[tuple[int, str, Optional[dict]]] = []
+        self.edits: list[tuple[int, int, str, Optional[dict]]] = []
+        self.deleted_messages: list[tuple[int, int]] = []
         self.documents: list[tuple[int, Path, Optional[str]]] = []
         self.callback_answers: list[tuple[str, Optional[str], bool]] = []
         self.cleared_markups: list[tuple[int, int]] = []
@@ -41,6 +43,17 @@ class FakeTelegramClient:
     def send_message(self, chat_id: int, text: str, *, reply_markup: Optional[dict] = None) -> dict:
         self.messages.append((chat_id, text, reply_markup))
         return {"ok": True, "message_id": 9001}
+
+    def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        *,
+        reply_markup: Optional[dict] = None,
+    ) -> dict:
+        self.edits.append((chat_id, message_id, text, reply_markup))
+        return {"ok": True, "message_id": message_id}
 
     def send_document(
         self,
@@ -79,6 +92,10 @@ class FakeTelegramClient:
         reply_markup: Optional[dict] = None,
     ) -> dict:
         self.cleared_markups.append((chat_id, message_id))
+        return {"ok": True}
+
+    def delete_message(self, chat_id: int, message_id: int) -> dict:
+        self.deleted_messages.append((chat_id, message_id))
         return {"ok": True}
 
 
@@ -325,7 +342,7 @@ class TelegramBotTests(unittest.TestCase):
                 "douyin_pipeline.telegram_bot.run_prepared_job"
             ) as run_prepared_job, patch(
                 "douyin_pipeline.telegram_bot.TelegramProgressReporter"
-            ):
+            ) as progress_reporter_cls:
                 prepared_job = type("Prepared", (), {"job_dir": job_dir, "action": "run"})()
                 prepare_job.return_value = prepared_job
                 run_prepared_job.return_value = {"job_id": "job-1", "status": "success"}
@@ -335,6 +352,8 @@ class TelegramBotTests(unittest.TestCase):
                     runner._process_message_job(1001, "https://v.douyin.com/test/", "fast", "knowledge")
 
             self.assertIn("总结：知识型", client.messages[0][1])
+            self.assertEqual(progress_reporter_cls.call_args.kwargs["progress_message_id"], 9001)
+            progress_reporter_cls.return_value.dismiss.assert_called_once()
             send_success.assert_called_once()
             process_summary_job.assert_called_once_with(1001, "job-1", "knowledge")
 
@@ -413,11 +432,11 @@ class TelegramBotTests(unittest.TestCase):
 
     def test_progress_reporter_sends_phase_and_progress_updates(self) -> None:
         client = FakeTelegramClient()
-        reporter = TelegramProgressReporter(client, 1001, enabled=True)
+        reporter = TelegramProgressReporter(client, 1001, enabled=True, progress_message_id=9001)
         reporter.handle_manifest({"job_id": "job-1", "status": "downloading", "phase": "downloading"})
 
         reporter._last_phase = "transcribing"
-        reporter._last_bucket = 1
+        reporter._last_progress_percent = 60.0
         reporter._last_sent_at = -999.0
         reporter.handle_manifest(
             {
@@ -430,10 +449,13 @@ class TelegramBotTests(unittest.TestCase):
                 "eta_seconds": 18.0,
             }
         )
+        reporter.dismiss()
 
-        self.assertEqual(len(client.messages), 2)
-        self.assertIn("job-1", client.messages[0][1])
-        self.assertIn("68%", client.messages[1][1])
+        self.assertEqual(client.messages, [])
+        self.assertEqual(len(client.edits), 2)
+        self.assertIn("job-1", client.edits[0][2])
+        self.assertIn("68%", client.edits[1][2])
+        self.assertEqual(client.deleted_messages, [(1001, 9001)])
 
 
 if __name__ == "__main__":

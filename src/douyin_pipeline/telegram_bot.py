@@ -442,7 +442,7 @@ class TelegramBotRunner:
             self._client.send_message(chat_id, build_failure_text(error_info.message, error_info.hint))
             return
 
-        self._client.send_message(
+        started_message = self._client.send_message(
             chat_id,
             build_job_started_text(
                 prepared_job.job_dir.name,
@@ -455,6 +455,9 @@ class TelegramBotRunner:
             self._client,
             chat_id,
             enabled=self._bot_settings.progress_updates,
+            progress_message_id=(
+                _extract_message_id(started_message) if self._bot_settings.progress_updates else None
+            ),
         )
 
         try:
@@ -469,10 +472,12 @@ class TelegramBotRunner:
                 "job_id": prepared_job.job_dir.name,
                 "error": str(exc),
             }
+            progress_reporter.dismiss()
             self._send_failure(chat_id, failed_manifest)
             return
 
         logger.info("telegram bot job completed chat_id=%s job_id=%s", chat_id, prepared_job.job_dir.name)
+        progress_reporter.dismiss()
         self._send_success(chat_id, manifest)
         if action == "run" and summary_style:
             self._process_summary_job(chat_id, prepared_job.job_dir.name, summary_style)
@@ -698,6 +703,24 @@ class TelegramBotClient:
             payload["reply_markup"] = reply_markup
         return self._json_request("sendMessage", payload=payload)
 
+    def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        *,
+        reply_markup: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": truncate_text(text, DEFAULT_MESSAGE_LIMIT),
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        return self._json_request("editMessageText", payload=payload)
+
     def answer_callback_query(
         self,
         callback_query_id: str,
@@ -727,6 +750,15 @@ class TelegramBotClient:
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         return self._json_request("editMessageReplyMarkup", payload=payload)
+
+    def delete_message(self, chat_id: int, message_id: int) -> dict[str, Any]:
+        return self._json_request(
+            "deleteMessage",
+            payload={
+                "chat_id": chat_id,
+                "message_id": message_id,
+            },
+        )
 
     def send_document(
         self,
@@ -885,6 +917,18 @@ def _normalize_public_base_url(value: Optional[str]) -> Optional[str]:
     return value.rstrip("/")
 
 
+def _extract_message_id(result: Any) -> Optional[int]:
+    if not isinstance(result, dict):
+        return None
+    message_id = result.get("message_id")
+    if message_id is None:
+        return None
+    try:
+        return int(message_id)
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_mode_selection_markup(request_id: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [
@@ -1016,12 +1060,15 @@ class TelegramProgressReporter:
         chat_id: int,
         *,
         enabled: bool,
+        progress_message_id: Optional[int] = None,
     ) -> None:
         self._client = client
         self._chat_id = chat_id
         self._enabled = enabled
+        self._message_id = progress_message_id
         self._last_phase: Optional[str] = None
-        self._last_bucket = -1
+        self._last_progress_percent: Optional[float] = None
+        self._last_text: Optional[str] = None
         self._last_sent_at = 0.0
 
     def handle_manifest(self, manifest: dict[str, Any]) -> None:
@@ -1033,31 +1080,62 @@ class TelegramProgressReporter:
             return
 
         phase = str(manifest.get("phase") or status or "")
-        if phase != self._last_phase:
-            self._last_phase = phase
-            phase_message = phase_progress_message(manifest)
-            if phase_message:
-                self._send(phase_message)
+        phase_changed = phase != self._last_phase
+        self._last_phase = phase
 
-        if phase != "transcribing":
+        text: Optional[str] = None
+        if phase == "transcribing":
+            progress_percent = manifest.get("progress_percent")
+            if progress_percent is not None:
+                percent = float(progress_percent)
+                now = monotonic()
+                should_emit = (
+                    phase_changed
+                    or self._last_progress_percent is None
+                    or percent >= self._last_progress_percent + 5.0
+                    or (now - self._last_sent_at >= 12.0 and percent > self._last_progress_percent + 1.0)
+                )
+                if should_emit:
+                    self._last_progress_percent = percent
+                    text = transcribing_progress_message(manifest, percent)
+        elif phase_changed:
+            self._last_progress_percent = None
+            text = phase_progress_message(manifest)
+
+        if text:
+            self._send_or_edit(text)
+
+    def dismiss(self) -> None:
+        if not self._enabled or self._message_id is None:
+            return
+        try:
+            self._client.delete_message(self._chat_id, self._message_id)
+        except Exception:
+            logger.exception("telegram progress message delete failed chat_id=%s message_id=%s", self._chat_id, self._message_id)
+        finally:
+            self._message_id = None
+            self._last_text = None
+
+    def _send_or_edit(self, message: str) -> None:
+        if message == self._last_text:
             return
 
-        progress_percent = manifest.get("progress_percent")
-        if progress_percent is None:
-            return
-
-        percent = float(progress_percent)
-        bucket = int(percent // 20)
-        now = monotonic()
-        if bucket <= self._last_bucket:
-            return
-        if now - self._last_sent_at < 8:
-            return
-
-        self._last_bucket = bucket
-        self._send(transcribing_progress_message(manifest, percent))
-
-    def _send(self, message: str) -> None:
         self._last_sent_at = monotonic()
-        self._client.send_message(self._chat_id, message)
+        self._last_text = message
+        if self._message_id is not None:
+            try:
+                self._client.edit_message_text(self._chat_id, self._message_id, message)
+                return
+            except Exception as exc:
+                if "message is not modified" in str(exc).lower():
+                    return
+                logger.warning(
+                    "telegram progress edit failed chat_id=%s message_id=%s error=%s",
+                    self._chat_id,
+                    self._message_id,
+                    exc,
+                )
+
+        result = self._client.send_message(self._chat_id, message)
+        self._message_id = _extract_message_id(result)
 

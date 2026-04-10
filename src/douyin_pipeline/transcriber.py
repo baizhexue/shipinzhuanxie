@@ -13,6 +13,12 @@ import wave
 from douyin_pipeline.config import Settings
 
 DEFAULT_WHISPER_BEAM_SIZE = 5
+EXTRACT_AUDIO_PROGRESS_PERCENT = 10.0
+MODEL_LOADING_PROGRESS_PERCENT = 18.0
+TRANSCRIBING_BASE_PROGRESS_PERCENT = 20.0
+TRANSCRIBING_PROGRESS_SPAN = 76.0
+WRITING_TRANSCRIPT_PROGRESS_PERCENT = 98.0
+COMPLETED_PROGRESS_PERCENT = 100.0
 SIMPLIFIED_CHINESE_INITIAL_PROMPT = (
     "以下是简体中文视频转写稿，请优先输出简体中文，保留正常标点、常见互联网词汇和专有名词。"
 )
@@ -38,7 +44,7 @@ def extract_audio(
     _emit_progress(
         progress_callback,
         phase="extracting_audio",
-        progress_percent=34.0,
+        progress_percent=EXTRACT_AUDIO_PROGRESS_PERCENT,
         eta_seconds=None,
         processed_seconds=0.0,
         duration_seconds=None,
@@ -87,7 +93,7 @@ def transcribe_video(
     _emit_progress(
         progress_callback,
         phase="loading_model",
-        progress_percent=40.0,
+        progress_percent=MODEL_LOADING_PROGRESS_PERCENT,
         eta_seconds=None,
         processed_seconds=0.0,
         duration_seconds=total_duration,
@@ -103,7 +109,7 @@ def transcribe_video(
     _emit_progress(
         progress_callback,
         phase="writing_transcript",
-        progress_percent=99.0,
+        progress_percent=WRITING_TRANSCRIPT_PROGRESS_PERCENT,
         eta_seconds=0.0,
         processed_seconds=total_duration,
         duration_seconds=total_duration,
@@ -113,7 +119,7 @@ def transcribe_video(
     _emit_progress(
         progress_callback,
         phase="completed",
-        progress_percent=100.0,
+        progress_percent=COMPLETED_PROGRESS_PERCENT,
         eta_seconds=0.0,
         processed_seconds=total_duration,
         duration_seconds=total_duration,
@@ -139,7 +145,7 @@ def _transcribe_audio(
     _emit_progress(
         progress_callback,
         phase="transcribing",
-        progress_percent=42.0,
+        progress_percent=TRANSCRIBING_BASE_PROGRESS_PERCENT,
         eta_seconds=None,
         processed_seconds=0.0,
         duration_seconds=resolved_duration or None,
@@ -347,7 +353,7 @@ def _emit_segment_progress(
         _emit_progress(
             progress_callback,
             phase="transcribing",
-            progress_percent=65.0,
+            progress_percent=TRANSCRIBING_BASE_PROGRESS_PERCENT + (TRANSCRIBING_PROGRESS_SPAN * 0.5),
             eta_seconds=None,
             processed_seconds=processed_seconds,
             duration_seconds=None,
@@ -357,7 +363,7 @@ def _emit_segment_progress(
 
     clamped_processed = min(processed_seconds, total_duration)
     completion_ratio = clamped_processed / total_duration
-    progress_percent = 42.0 + (completion_ratio * 56.0)
+    progress_percent = TRANSCRIBING_BASE_PROGRESS_PERCENT + (completion_ratio * TRANSCRIBING_PROGRESS_SPAN)
     elapsed = max(perf_counter() - started_at, 0.001)
     eta_seconds = _estimate_eta_seconds(
         processed_seconds=clamped_processed,
