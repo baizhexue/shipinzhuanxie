@@ -11,6 +11,7 @@ from douyin_pipeline.deepseek_summary import SummaryResult
 from douyin_pipeline.telegram_bot import (
     TelegramBotRunner,
     TelegramBotSettings,
+    TelegramBotClient,
     TelegramProgressReporter,
 )
 
@@ -361,6 +362,58 @@ class TelegramBotTests(unittest.TestCase):
             progress_reporter_cls.return_value.dismiss.assert_called_once()
             send_success.assert_called_once()
             process_summary_job.assert_called_once_with(1001, "job-1", "knowledge")
+
+    def test_process_message_job_continues_when_started_message_fails(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            job_dir = output_dir / "job-1"
+            job_dir.mkdir(parents=True)
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(output_dir, deepseek_api_key="secret"),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=output_dir / "state.json",
+                ),
+                client,
+            )
+
+            with patch("douyin_pipeline.telegram_bot.prepare_job") as prepare_job, patch(
+                "douyin_pipeline.telegram_bot.run_prepared_job"
+            ) as run_prepared_job, patch(
+                "douyin_pipeline.telegram_bot.TelegramProgressReporter"
+            ) as progress_reporter_cls:
+                prepared_job = type("Prepared", (), {"job_dir": job_dir, "action": "run"})()
+                prepare_job.return_value = prepared_job
+                run_prepared_job.return_value = {"job_id": "job-1", "status": "success"}
+                with patch.object(client, "send_message", side_effect=[RuntimeError("timeout")]), patch.object(
+                    runner, "_send_success"
+                ) as send_success:
+                    runner._process_message_job(1001, "https://v.douyin.com/test/", "fast", None)
+
+            self.assertIsNone(progress_reporter_cls.call_args.kwargs["progress_message_id"])
+            send_success.assert_called_once()
+
+
+class TelegramBotClientTests(unittest.TestCase):
+    def test_get_updates_uses_poll_timeout_override(self) -> None:
+        settings = TelegramBotSettings(
+            token="token",
+            allowed_chat_ids=(),
+            public_base_url=None,
+            state_path=Path("state.json"),
+            poll_timeout=15,
+            retry_delay=3.0,
+            progress_updates=True,
+        )
+        client = TelegramBotClient(settings)
+
+        with patch.object(client, "_json_request", return_value=[]) as request:
+            client.get_updates(offset=123, timeout=15, allowed_updates=("message",))
+
+        self.assertEqual(request.call_args.kwargs["timeout"], 25)
 
     def test_send_success_no_longer_prompts_for_summary(self) -> None:
         with TemporaryDirectory() as tmp_dir:

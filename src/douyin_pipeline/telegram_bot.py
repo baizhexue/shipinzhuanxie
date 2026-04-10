@@ -56,6 +56,11 @@ DEFAULT_RETRY_DELAY = 3.0
 MODE_CALLBACK_PREFIX = "txmode:"
 SUMMARY_CALLBACK_PREFIX = "txsummary:"
 MAX_PENDING_SELECTIONS = 20
+TRANSCRIBE_PROGRESS_MIN_INCREMENT = 1.0
+TRANSCRIBE_PROGRESS_MIN_INTERVAL_SECONDS = 1.0
+CHAT_ACTION_INTERVAL_SECONDS = 1.0
+TELEGRAM_API_REQUEST_TIMEOUT_SECONDS = 8
+TELEGRAM_API_UPLOAD_TIMEOUT_SECONDS = 45
 logger = logging.getLogger(__name__)
 
 
@@ -442,15 +447,24 @@ class TelegramBotRunner:
             self._client.send_message(chat_id, build_failure_text(error_info.message, error_info.hint))
             return
 
-        started_message = self._client.send_message(
-            chat_id,
-            build_job_started_text(
+        started_message: Optional[dict[str, Any]] = None
+        try:
+            started_message = self._client.send_message(
+                chat_id,
+                build_job_started_text(
+                    prepared_job.job_dir.name,
+                    mode_label=mode_label,
+                    action=action,
+                    summary_label=SUMMARY_STYLE_LABELS.get(summary_style) if summary_style else None,
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "telegram bot failed to send started message chat_id=%s job_id=%s error=%s",
+                chat_id,
                 prepared_job.job_dir.name,
-                mode_label=mode_label,
-                action=action,
-                summary_label=SUMMARY_STYLE_LABELS.get(summary_style) if summary_style else None,
-            ),
-        )
+                exc,
+            )
         activity_heartbeat = TelegramActivityHeartbeat(
             self._client,
             chat_id,
@@ -699,7 +713,7 @@ class TelegramBotClient:
         }
         if offset is not None:
             payload["offset"] = offset
-        result = self._json_request("getUpdates", payload=payload)
+        result = self._json_request("getUpdates", payload=payload, timeout=timeout + 10)
         if not isinstance(result, list):
             raise RuntimeError("Telegram Bot API returned unexpected getUpdates payload.")
         return result
@@ -804,6 +818,7 @@ class TelegramBotClient:
         method: str,
         *,
         payload: Optional[dict[str, Any]] = None,
+        timeout: Optional[float] = None,
     ) -> Any:
         data = None
         headers = {}
@@ -819,7 +834,10 @@ class TelegramBotClient:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=self._settings.poll_timeout + 10) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=timeout if timeout is not None else TELEGRAM_API_REQUEST_TIMEOUT_SECONDS,
+            ) as response:
                 response_payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -869,7 +887,7 @@ class TelegramBotClient:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=self._settings.poll_timeout + 30) as response:
+            with urllib.request.urlopen(request, timeout=TELEGRAM_API_UPLOAD_TIMEOUT_SECONDS) as response:
                 response_payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -1123,8 +1141,11 @@ class TelegramProgressReporter:
                 should_emit = (
                     phase_changed
                     or self._last_progress_percent is None
-                    or percent >= self._last_progress_percent + 5.0
-                    or (now - self._last_sent_at >= 12.0 and percent > self._last_progress_percent + 1.0)
+                    or percent >= self._last_progress_percent + TRANSCRIBE_PROGRESS_MIN_INCREMENT
+                    or (
+                        now - self._last_sent_at >= TRANSCRIBE_PROGRESS_MIN_INTERVAL_SECONDS
+                        and percent > self._last_progress_percent
+                    )
                 )
                 if should_emit:
                     self._last_progress_percent = percent
@@ -1179,13 +1200,13 @@ class TelegramActivityHeartbeat:
         *,
         action: str = "typing",
         enabled: bool,
-        interval_seconds: float = 4.0,
+        interval_seconds: float = CHAT_ACTION_INTERVAL_SECONDS,
     ) -> None:
         self._client = client
         self._chat_id = chat_id
         self._action = action
         self._enabled = enabled
-        self._interval_seconds = max(interval_seconds, 1.5)
+        self._interval_seconds = max(interval_seconds, 1.0)
         self._stop_event = Event()
         self._thread: Optional[Thread] = None
 
