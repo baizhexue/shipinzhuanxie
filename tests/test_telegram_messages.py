@@ -11,7 +11,6 @@ from douyin_pipeline.telegram_messages import (
     build_job_started_text,
     build_mode_expired_text,
     build_mode_selection_text,
-    build_public_links,
     build_success_summary_text,
     build_summary_completed_text,
     build_summary_document_caption,
@@ -91,7 +90,7 @@ class TelegramMessagesTests(unittest.TestCase):
         self.assertIn("原因：下载失败", text)
         self.assertIn("建议：重试", text)
 
-    def test_build_success_summary_text_includes_title_and_links(self) -> None:
+    def test_build_success_summary_text_includes_title_without_links(self) -> None:
         text = build_success_summary_text(
             {
                 "job_id": "job-1",
@@ -102,29 +101,7 @@ class TelegramMessagesTests(unittest.TestCase):
         )
         self.assertIn("任务完成。", text)
         self.assertIn("标题：demo", text)
-        self.assertIn("视频: http://127.0.0.1:4444/output/job-1/demo.mp4", text)
-
-    def test_build_public_links_uses_chinese_labels(self) -> None:
-        links = build_public_links(
-            {
-                "files": [
-                    {"label": "Video", "url": "/video"},
-                    {"label": "Audio", "url": "/audio"},
-                    {"label": "Transcript", "url": "/text"},
-                    {"label": "Summary", "url": "/summary"},
-                ]
-            },
-            "http://host",
-        )
-        self.assertEqual(
-            links,
-            [
-                "视频: http://host/video",
-                "音频: http://host/audio",
-                "文本: http://host/text",
-                "总结: http://host/summary",
-            ],
-        )
+        self.assertNotIn("http://127.0.0.1:4444", text)
 
     def test_truncate_text_adds_ellipsis(self) -> None:
         self.assertEqual(truncate_text("abcdef", 4), "abcd...")

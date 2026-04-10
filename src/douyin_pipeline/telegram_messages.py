@@ -5,7 +5,6 @@ from typing import Any, Optional
 
 
 DEFAULT_MESSAGE_LIMIT = 3900
-DEFAULT_TRANSCRIPT_PREVIEW_LIMIT = 3500
 DEFAULT_SUMMARY_CHUNK_LIMIT = 3400
 
 
@@ -120,9 +119,6 @@ def build_success_summary_text(
     title = public_job.get("title")
     if title:
         summary_lines.append(f"标题：{title}")
-
-    if public_base_url:
-        summary_lines.extend(build_public_links(public_job, public_base_url))
 
     return "\n".join(summary_lines)
 

@@ -25,7 +25,6 @@ from douyin_pipeline.parser import extract_share_url
 from douyin_pipeline.pipeline import prepare_job, run_prepared_job
 from douyin_pipeline.telegram_messages import (
     DEFAULT_MESSAGE_LIMIT,
-    DEFAULT_TRANSCRIPT_PREVIEW_LIMIT,
     build_summary_completed_text,
     build_summary_document_caption,
     build_summary_expired_text,
