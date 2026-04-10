@@ -211,7 +211,7 @@ class TelegramBotTests(unittest.TestCase):
 
             self.assertEqual(client.callback_answers, [("cb-1", "已选择只下载视频", False)])
             self.assertEqual(len(DummyThread.instances), 1)
-            self.assertEqual(DummyThread.instances[0].args, (1001, "https://v.douyin.com/test/", "download", None))
+            self.assertEqual(DummyThread.instances[0].args, (1001, "https://v.douyin.com/test/", "download", None, 5001))
 
     def test_summary_selection_is_front_loaded_after_run_mode(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -243,8 +243,8 @@ class TelegramBotTests(unittest.TestCase):
 
             self.assertEqual(client.callback_answers, [("cb-1", "已选择高精度转写", False)])
             self.assertEqual(len(DummyThread.instances), 0)
-            self.assertIn("自动总结", client.messages[-1][1])
-            self.assertIsNotNone(client.messages[-1][2])
+            self.assertIn("接下来要不要自动总结", client.edits[-1][2])
+            self.assertIsNotNone(client.edits[-1][3])
             self.assertEqual(len(runner._state["pending_summaries"]), 1)
 
     def test_summary_callback_starts_job_with_selected_summary_style(self) -> None:
@@ -284,7 +284,7 @@ class TelegramBotTests(unittest.TestCase):
             self.assertEqual(len(DummyThread.instances), 1)
             self.assertEqual(
                 DummyThread.instances[0].args,
-                (1001, "https://v.douyin.com/test/", "accurate", "plain"),
+                (1001, "https://v.douyin.com/test/", "accurate", "plain", 5002),
             )
 
     def test_summary_callback_can_skip_summary_and_still_start_job(self) -> None:
@@ -324,7 +324,7 @@ class TelegramBotTests(unittest.TestCase):
             self.assertEqual(len(DummyThread.instances), 1)
             self.assertEqual(
                 DummyThread.instances[0].args,
-                (1001, "https://v.douyin.com/test/", "fast", None),
+                (1001, "https://v.douyin.com/test/", "fast", None, 5003),
             )
 
     def test_process_message_job_includes_summary_label_when_selected(self) -> None:
@@ -359,9 +359,9 @@ class TelegramBotTests(unittest.TestCase):
 
             self.assertIn("总结：知识型", client.messages[0][1])
             self.assertEqual(progress_reporter_cls.call_args.kwargs["progress_message_id"], 9001)
-            progress_reporter_cls.return_value.dismiss.assert_called_once()
-            send_success.assert_called_once()
-            process_summary_job.assert_called_once_with(1001, "job-1", "knowledge")
+            progress_reporter_cls.return_value.dismiss.assert_not_called()
+            send_success.assert_called_once_with(1001, {"job_id": "job-1", "status": "success"}, progress_reporter=progress_reporter_cls.return_value)
+            process_summary_job.assert_called_once_with(1001, "job-1", "knowledge", progress_reporter=progress_reporter_cls.return_value)
 
     def test_process_message_job_continues_when_started_message_fails(self) -> None:
         with TemporaryDirectory() as tmp_dir:

@@ -350,6 +350,7 @@ class TelegramBotRunner:
         selection: tuple[str, str],
     ) -> None:
         message = callback_query.get("message") or {}
+        message_id = _extract_message_id(message)
         request_id, mode = selection
         pending_request = self._pop_pending_request(request_id)
         if pending_request is None or int(pending_request.get("chat_id") or 0) != chat_id:
@@ -367,10 +368,8 @@ class TelegramBotRunner:
                     show_alert=False,
                 )
 
-        self._clear_callback_markup(chat_id, message)
-
         if mode == "cancel":
-            self._client.send_message(chat_id, "这条任务已取消。")
+            self._replace_status_message(chat_id, message_id, "这条任务已取消。")
             return
 
         raw_input = str(pending_request["raw_input"])
@@ -378,16 +377,17 @@ class TelegramBotRunner:
         if mode == "download" or not self._app_settings.deepseek_api_key:
             thread = Thread(
                 target=self._process_message_job,
-                args=(chat_id, raw_input, mode, None),
+                args=(chat_id, raw_input, mode, None, message_id),
                 daemon=True,
             )
             thread.start()
             return
 
         summary_request_id = self._create_pending_summary_request(chat_id, raw_input, mode)
-        self._client.send_message(
+        self._replace_status_message(
             chat_id,
             build_summary_selection_text(mode_label),
+            message_id=message_id,
             reply_markup=_build_summary_selection_markup(summary_request_id),
         )
 
@@ -400,6 +400,7 @@ class TelegramBotRunner:
         selection: tuple[str, str],
     ) -> None:
         message = callback_query.get("message") or {}
+        message_id = _extract_message_id(message)
         request_id, style = selection
         pending_summary = self._pop_pending_summary_request(request_id)
         if pending_summary is None or int(pending_summary.get("chat_id") or 0) != chat_id:
@@ -411,8 +412,6 @@ class TelegramBotRunner:
             callback_text = "已跳过总结，将直接开始任务。" if style == "skip" else f"已选择{SUMMARY_STYLE_LABELS[style]}总结"
             self._client.answer_callback_query(callback_id, text=callback_text, show_alert=False)
 
-        self._clear_callback_markup(chat_id, message)
-
         thread = Thread(
             target=self._process_message_job,
             args=(
@@ -420,6 +419,7 @@ class TelegramBotRunner:
                 str(pending_summary["raw_input"]),
                 str(pending_summary["mode"]),
                 None if style == "skip" else style,
+                message_id,
             ),
             daemon=True,
         )
@@ -431,6 +431,7 @@ class TelegramBotRunner:
         raw_input: str,
         mode: str,
         summary_style: Optional[str],
+        status_message_id: Optional[int] = None,
     ) -> None:
         logger.info(
             "telegram bot received job chat_id=%s mode=%s summary_style=%s",
@@ -447,9 +448,9 @@ class TelegramBotRunner:
             self._client.send_message(chat_id, build_failure_text(error_info.message, error_info.hint))
             return
 
-        started_message: Optional[dict[str, Any]] = None
+        started_message_id = status_message_id
         try:
-            started_message = self._client.send_message(
+            result = self._replace_status_message(
                 chat_id,
                 build_job_started_text(
                     prepared_job.job_dir.name,
@@ -457,7 +458,9 @@ class TelegramBotRunner:
                     action=action,
                     summary_label=SUMMARY_STYLE_LABELS.get(summary_style) if summary_style else None,
                 ),
+                message_id=status_message_id,
             )
+            started_message_id = _extract_message_id(result) or started_message_id
         except Exception as exc:
             logger.warning(
                 "telegram bot failed to send started message chat_id=%s job_id=%s error=%s",
@@ -475,9 +478,7 @@ class TelegramBotRunner:
             self._client,
             chat_id,
             enabled=self._bot_settings.progress_updates,
-            progress_message_id=(
-                _extract_message_id(started_message) if self._bot_settings.progress_updates else None
-            ),
+            progress_message_id=started_message_id if self._bot_settings.progress_updates else None,
         )
 
         try:
@@ -492,34 +493,47 @@ class TelegramBotRunner:
                 "job_id": prepared_job.job_dir.name,
                 "error": str(exc),
             }
-            progress_reporter.dismiss()
             activity_heartbeat.stop()
-            self._send_failure(chat_id, failed_manifest)
+            self._send_failure(chat_id, failed_manifest, progress_reporter=progress_reporter)
             return
 
         logger.info("telegram bot job completed chat_id=%s job_id=%s", chat_id, prepared_job.job_dir.name)
-        progress_reporter.dismiss()
         activity_heartbeat.stop()
-        self._send_success(chat_id, manifest)
+        self._send_success(chat_id, manifest, progress_reporter=progress_reporter)
         if action == "run" and summary_style:
-            self._process_summary_job(chat_id, prepared_job.job_dir.name, summary_style)
-
-    def _send_failure(self, chat_id: int, manifest: dict[str, Any]) -> None:
-        self._client.send_message(chat_id, build_failure_manifest_text(manifest))
-
-    def _send_success(self, chat_id: int, manifest: dict[str, Any]) -> None:
-        public_job = to_public_job(manifest)
-        transcript_preview = manifest.get("transcript_preview") or ""
-        self._client.send_message(
-            chat_id,
-            build_success_summary_text(public_job, self._bot_settings.public_base_url),
-        )
-
-        if transcript_preview:
-            self._client.send_message(
+            self._process_summary_job(
                 chat_id,
-                truncate_text(transcript_preview, DEFAULT_TRANSCRIPT_PREVIEW_LIMIT),
+                prepared_job.job_dir.name,
+                summary_style,
+                progress_reporter=progress_reporter,
             )
+
+    def _send_failure(
+        self,
+        chat_id: int,
+        manifest: dict[str, Any],
+        *,
+        progress_reporter: Optional["TelegramProgressReporter"] = None,
+    ) -> None:
+        message = build_failure_manifest_text(manifest)
+        if progress_reporter is not None:
+            progress_reporter.complete(message)
+            return
+        self._client.send_message(chat_id, message)
+
+    def _send_success(
+        self,
+        chat_id: int,
+        manifest: dict[str, Any],
+        *,
+        progress_reporter: Optional["TelegramProgressReporter"] = None,
+    ) -> None:
+        public_job = to_public_job(manifest)
+        summary_text = build_success_summary_text(public_job, self._bot_settings.public_base_url)
+        if progress_reporter is not None:
+            progress_reporter.complete(summary_text)
+        else:
+            self._client.send_message(chat_id, summary_text)
 
         absolute_transcript_path = resolve_transcript_file(
             self._app_settings.output_dir,
@@ -532,10 +546,20 @@ class TelegramBotRunner:
             except Exception as exc:
                 self._client.send_message(chat_id, build_document_send_failed_text(exc))
 
-    def _process_summary_job(self, chat_id: int, job_id: str, style: str) -> None:
+    def _process_summary_job(
+        self,
+        chat_id: int,
+        job_id: str,
+        style: str,
+        *,
+        progress_reporter: Optional["TelegramProgressReporter"] = None,
+    ) -> None:
         style_label = SUMMARY_STYLE_LABELS[style]
         logger.info("telegram summary started chat_id=%s job_id=%s style=%s", chat_id, job_id, style)
-        self._client.send_message(chat_id, build_summary_started_text(job_id, style_label))
+        if progress_reporter is not None:
+            progress_reporter.complete(build_summary_started_text(job_id, style_label))
+        else:
+            self._client.send_message(chat_id, build_summary_started_text(job_id, style_label))
         activity_heartbeat = TelegramActivityHeartbeat(
             self._client,
             chat_id,
@@ -547,13 +571,19 @@ class TelegramBotRunner:
         manifest = read_manifest(job_dir)
         if manifest is None:
             activity_heartbeat.stop()
-            self._client.send_message(chat_id, build_summary_failed_text(style_label, "任务记录不存在。"))
+            if progress_reporter is not None:
+                progress_reporter.complete(build_summary_failed_text(style_label, "任务记录不存在。"))
+            else:
+                self._client.send_message(chat_id, build_summary_failed_text(style_label, "任务记录不存在。"))
             return
 
         transcript_text = read_transcript_text(self._app_settings.output_dir, manifest)
         if not transcript_text:
             activity_heartbeat.stop()
-            self._client.send_message(chat_id, build_summary_failed_text(style_label, "转写文本不存在。"))
+            if progress_reporter is not None:
+                progress_reporter.complete(build_summary_failed_text(style_label, "转写文本不存在。"))
+            else:
+                self._client.send_message(chat_id, build_summary_failed_text(style_label, "转写文本不存在。"))
             return
 
         self._write_summary_status(job_id, status="running", style=style)
@@ -572,7 +602,10 @@ class TelegramBotRunner:
             if isinstance(exc, SummaryError) and not message:
                 message = "DeepSeek 总结失败。"
             activity_heartbeat.stop()
-            self._client.send_message(chat_id, build_summary_failed_text(style_label, message))
+            if progress_reporter is not None:
+                progress_reporter.complete(build_summary_failed_text(style_label, message))
+            else:
+                self._client.send_message(chat_id, build_summary_failed_text(style_label, message))
             return
 
         updated_manifest = self._write_summary_status(
@@ -585,10 +618,11 @@ class TelegramBotRunner:
             error=None,
         )
         activity_heartbeat.stop()
-        self._client.send_message(
-            chat_id,
-            build_summary_completed_text(job_id, style_label, summary_result.title),
-        )
+        completed_text = build_summary_completed_text(job_id, style_label, summary_result.title)
+        if progress_reporter is not None:
+            progress_reporter.complete(completed_text)
+        else:
+            self._client.send_message(chat_id, completed_text)
         public_job = to_public_job(updated_manifest)
         if self._bot_settings.public_base_url:
             summary_links = [
@@ -610,14 +644,29 @@ class TelegramBotRunner:
         except Exception as exc:
             self._client.send_message(chat_id, build_document_send_failed_text(exc))
 
-    def _clear_callback_markup(self, chat_id: int, message: dict[str, Any]) -> None:
-        message_id = message.get("message_id")
-        if message_id is None:
-            return
-        try:
-            self._client.edit_message_reply_markup(chat_id, int(message_id), reply_markup=None)
-        except Exception:
-            logger.exception("telegram bot failed to clear selection markup chat_id=%s", chat_id)
+    def _replace_status_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        message_id: Optional[int],
+        reply_markup: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if message_id is not None:
+            try:
+                return self._client.edit_message_text(
+                    chat_id,
+                    int(message_id),
+                    text,
+                    reply_markup=reply_markup,
+                )
+            except Exception:
+                logger.exception(
+                    "telegram bot failed to replace status message chat_id=%s message_id=%s",
+                    chat_id,
+                    message_id,
+                )
+        return self._client.send_message(chat_id, text, reply_markup=reply_markup)
 
     def _create_pending_request(self, chat_id: int, raw_input: str) -> str:
         pending_requests = dict(self._state.get("pending_requests") or {})
@@ -1156,6 +1205,14 @@ class TelegramProgressReporter:
 
         if text:
             self._send_or_edit(text)
+
+    def complete(self, final_text: Optional[str] = None) -> None:
+        if not self._enabled:
+            return
+        if final_text:
+            self._send_or_edit(final_text)
+            return
+        self.dismiss()
 
     def dismiss(self) -> None:
         if not self._enabled or self._message_id is None:
