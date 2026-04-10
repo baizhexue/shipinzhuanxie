@@ -222,6 +222,22 @@ def run_prepared_job(
             prepared_job.source_url,
             settings,
             job_dir=prepared_job.job_dir,
+            progress_callback=lambda payload: _write_status(
+                settings=settings,
+                prepared_job=prepared_job,
+                status="downloading",
+                detail=str(payload.get("detail") or "正在下载视频。"),
+                download_result=None,
+                transcript_result=None,
+                error=None,
+                error_info=None,
+                phase=_as_text(payload.get("phase")) or "downloading",
+                progress_percent=_as_float(payload.get("progress_percent")) or 8.0,
+                eta_seconds=None,
+                processed_seconds=None,
+                duration_seconds=None,
+                status_callback=status_callback,
+            ),
         )
         logger.info(
             "download finished job_id=%s video_path=%s",

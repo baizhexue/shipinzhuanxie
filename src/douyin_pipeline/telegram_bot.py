@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from time import monotonic, sleep, time
 from typing import Any, Iterable, Optional
 import json
@@ -451,6 +451,12 @@ class TelegramBotRunner:
                 summary_label=SUMMARY_STYLE_LABELS.get(summary_style) if summary_style else None,
             ),
         )
+        activity_heartbeat = TelegramActivityHeartbeat(
+            self._client,
+            chat_id,
+            enabled=self._bot_settings.progress_updates,
+        )
+        activity_heartbeat.start()
         progress_reporter = TelegramProgressReporter(
             self._client,
             chat_id,
@@ -473,11 +479,13 @@ class TelegramBotRunner:
                 "error": str(exc),
             }
             progress_reporter.dismiss()
+            activity_heartbeat.stop()
             self._send_failure(chat_id, failed_manifest)
             return
 
         logger.info("telegram bot job completed chat_id=%s job_id=%s", chat_id, prepared_job.job_dir.name)
         progress_reporter.dismiss()
+        activity_heartbeat.stop()
         self._send_success(chat_id, manifest)
         if action == "run" and summary_style:
             self._process_summary_job(chat_id, prepared_job.job_dir.name, summary_style)
@@ -514,15 +522,23 @@ class TelegramBotRunner:
         style_label = SUMMARY_STYLE_LABELS[style]
         logger.info("telegram summary started chat_id=%s job_id=%s style=%s", chat_id, job_id, style)
         self._client.send_message(chat_id, build_summary_started_text(job_id, style_label))
+        activity_heartbeat = TelegramActivityHeartbeat(
+            self._client,
+            chat_id,
+            enabled=self._bot_settings.progress_updates,
+        )
+        activity_heartbeat.start()
 
         job_dir = self._app_settings.output_dir / job_id
         manifest = read_manifest(job_dir)
         if manifest is None:
+            activity_heartbeat.stop()
             self._client.send_message(chat_id, build_summary_failed_text(style_label, "任务记录不存在。"))
             return
 
         transcript_text = read_transcript_text(self._app_settings.output_dir, manifest)
         if not transcript_text:
+            activity_heartbeat.stop()
             self._client.send_message(chat_id, build_summary_failed_text(style_label, "转写文本不存在。"))
             return
 
@@ -541,6 +557,7 @@ class TelegramBotRunner:
             message = str(exc)
             if isinstance(exc, SummaryError) and not message:
                 message = "DeepSeek 总结失败。"
+            activity_heartbeat.stop()
             self._client.send_message(chat_id, build_summary_failed_text(style_label, message))
             return
 
@@ -553,6 +570,7 @@ class TelegramBotRunner:
             summary_text=summary_result.text,
             error=None,
         )
+        activity_heartbeat.stop()
         self._client.send_message(
             chat_id,
             build_summary_completed_text(job_id, style_label, summary_result.title),
@@ -702,6 +720,15 @@ class TelegramBotClient:
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         return self._json_request("sendMessage", payload=payload)
+
+    def send_chat_action(self, chat_id: int, action: str) -> dict[str, Any]:
+        return self._json_request(
+            "sendChatAction",
+            payload={
+                "chat_id": chat_id,
+                "action": action,
+            },
+        )
 
     def edit_message_text(
         self,
@@ -1067,6 +1094,7 @@ class TelegramProgressReporter:
         self._enabled = enabled
         self._message_id = progress_message_id
         self._last_phase: Optional[str] = None
+        self._last_detail: Optional[str] = None
         self._last_progress_percent: Optional[float] = None
         self._last_text: Optional[str] = None
         self._last_sent_at = 0.0
@@ -1080,8 +1108,11 @@ class TelegramProgressReporter:
             return
 
         phase = str(manifest.get("phase") or status or "")
+        detail = str(manifest.get("detail") or "")
         phase_changed = phase != self._last_phase
+        detail_changed = detail != self._last_detail
         self._last_phase = phase
+        self._last_detail = detail
 
         text: Optional[str] = None
         if phase == "transcribing":
@@ -1098,7 +1129,7 @@ class TelegramProgressReporter:
                 if should_emit:
                     self._last_progress_percent = percent
                     text = transcribing_progress_message(manifest, percent)
-        elif phase_changed:
+        elif phase_changed or detail_changed:
             self._last_progress_percent = None
             text = phase_progress_message(manifest)
 
@@ -1138,4 +1169,43 @@ class TelegramProgressReporter:
 
         result = self._client.send_message(self._chat_id, message)
         self._message_id = _extract_message_id(result)
+
+
+class TelegramActivityHeartbeat:
+    def __init__(
+        self,
+        client: TelegramBotClient,
+        chat_id: int,
+        *,
+        action: str = "typing",
+        enabled: bool,
+        interval_seconds: float = 4.0,
+    ) -> None:
+        self._client = client
+        self._chat_id = chat_id
+        self._action = action
+        self._enabled = enabled
+        self._interval_seconds = max(interval_seconds, 1.5)
+        self._stop_event = Event()
+        self._thread: Optional[Thread] = None
+
+    def start(self) -> None:
+        if not self._enabled or self._thread is not None:
+            return
+        self._thread = Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self._client.send_chat_action(self._chat_id, self._action)
+            except Exception as exc:
+                logger.warning("telegram chat action failed chat_id=%s error=%s", self._chat_id, exc)
+            self._stop_event.wait(self._interval_seconds)
 

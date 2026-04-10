@@ -138,6 +138,19 @@ class TelegramMessagesTests(unittest.TestCase):
         text = phase_progress_message({"phase": "loading_model", "job_id": "job-1"})
         self.assertEqual(text, "音频已准备，开始加载转写模型。\n任务 ID：job-1")
 
+    def test_phase_progress_message_appends_detail_when_present(self) -> None:
+        text = phase_progress_message(
+            {
+                "phase": "downloading",
+                "job_id": "job-1",
+                "detail": "yt-dlp 失败，正在切换浏览器回退下载。",
+            }
+        )
+        self.assertEqual(
+            text,
+            "开始下载视频。\n任务 ID：job-1\n当前状态：yt-dlp 失败，正在切换浏览器回退下载。",
+        )
+
     def test_transcribing_progress_message_formats_eta_and_duration(self) -> None:
         text = transcribing_progress_message(
             {

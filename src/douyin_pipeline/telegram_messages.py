@@ -182,6 +182,7 @@ def split_message_chunks(value: str, limit: int = DEFAULT_SUMMARY_CHUNK_LIMIT) -
 def phase_progress_message(manifest: dict[str, Any]) -> Optional[str]:
     phase = str(manifest.get("phase") or "")
     job_id = str(manifest.get("job_id") or "-")
+    detail = str(manifest.get("detail") or "").strip()
 
     mapping = {
         "queued": f"任务已排队。\n任务 ID：{job_id}",
@@ -190,7 +191,12 @@ def phase_progress_message(manifest: dict[str, Any]) -> Optional[str]:
         "loading_model": f"音频已准备，开始加载转写模型。\n任务 ID：{job_id}",
         "writing_transcript": f"转写完成，正在写入文本文件。\n任务 ID：{job_id}",
     }
-    return mapping.get(phase)
+    message = mapping.get(phase)
+    if not message:
+        return None
+    if detail and detail not in message:
+        return f"{message}\n当前状态：{detail}"
+    return message
 
 
 def transcribing_progress_message(manifest: dict[str, Any], percent: float) -> str:

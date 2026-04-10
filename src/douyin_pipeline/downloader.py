@@ -8,7 +8,7 @@ import json
 import re
 import shutil
 import subprocess
-from typing import Optional
+from typing import Callable, Optional
 
 from douyin_pipeline.config import Settings
 from douyin_pipeline.downloader_fallbacks import resolve_download_fallback
@@ -43,6 +43,8 @@ YTDLP_DOWNLOAD_TIMEOUT_SECONDS = 180
 YTDLP_HELP_TIMEOUT_SECONDS = 8
 logger = logging.getLogger(__name__)
 
+DownloadProgressCallback = Optional[Callable[[dict[str, object]], None]]
+
 
 @dataclass(frozen=True)
 class DownloadResult:
@@ -64,6 +66,7 @@ def download_video(
     settings: Settings,
     *,
     job_dir: Optional[Path] = None,
+    progress_callback: DownloadProgressCallback = None,
 ) -> DownloadResult:
     job_dir = job_dir or create_job_dir(settings.output_dir)
     platform = detect_source_platform(source_url)
@@ -73,6 +76,12 @@ def download_video(
     except RuntimeError as exc:
         fallback = resolve_download_fallback(source_url, exc)
         if fallback is not None:
+            _emit_download_progress(
+                progress_callback,
+                phase="downloading",
+                progress_percent=14.0,
+                detail="yt-dlp 失败，正在切换浏览器回退下载。",
+            )
             logger.warning(
                 "download fallback triggered platform=%s job_id=%s reason=%s",
                 platform,
@@ -238,3 +247,21 @@ def _can_use_deno_compat_mode(js_runtime: str) -> bool:
 
 def _build_ytdlp_process_env(js_runtime: str) -> Optional[dict[str, str]]:
     return _runtime_build_ytdlp_process_env(js_runtime)
+
+
+def _emit_download_progress(
+    progress_callback: DownloadProgressCallback,
+    *,
+    phase: str,
+    progress_percent: float,
+    detail: str,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "phase": phase,
+            "progress_percent": progress_percent,
+            "detail": detail,
+        }
+    )

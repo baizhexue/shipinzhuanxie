@@ -37,6 +37,7 @@ class FakeTelegramClient:
         self.edits: list[tuple[int, int, str, Optional[dict]]] = []
         self.deleted_messages: list[tuple[int, int]] = []
         self.documents: list[tuple[int, Path, Optional[str]]] = []
+        self.chat_actions: list[tuple[int, str]] = []
         self.callback_answers: list[tuple[str, Optional[str], bool]] = []
         self.cleared_markups: list[tuple[int, int]] = []
 
@@ -63,6 +64,10 @@ class FakeTelegramClient:
         caption: Optional[str] = None,
     ) -> dict:
         self.documents.append((chat_id, document_path, caption))
+        return {"ok": True}
+
+    def send_chat_action(self, chat_id: int, action: str) -> dict:
+        self.chat_actions.append((chat_id, action))
         return {"ok": True}
 
     def delete_webhook(self) -> None:
@@ -456,6 +461,31 @@ class TelegramBotTests(unittest.TestCase):
         self.assertIn("job-1", client.edits[0][2])
         self.assertIn("68%", client.edits[1][2])
         self.assertEqual(client.deleted_messages, [(1001, 9001)])
+
+    def test_progress_reporter_updates_when_detail_changes_in_same_phase(self) -> None:
+        client = FakeTelegramClient()
+        reporter = TelegramProgressReporter(client, 1001, enabled=True, progress_message_id=9001)
+        reporter.handle_manifest(
+            {
+                "job_id": "job-1",
+                "status": "downloading",
+                "phase": "downloading",
+                "detail": "正在下载视频。",
+            }
+        )
+
+        reporter._last_sent_at = -999.0
+        reporter.handle_manifest(
+            {
+                "job_id": "job-1",
+                "status": "downloading",
+                "phase": "downloading",
+                "detail": "yt-dlp 失败，正在切换浏览器回退下载。",
+            }
+        )
+
+        self.assertEqual(len(client.edits), 2)
+        self.assertIn("当前状态：yt-dlp 失败，正在切换浏览器回退下载。", client.edits[-1][2])
 
 
 if __name__ == "__main__":

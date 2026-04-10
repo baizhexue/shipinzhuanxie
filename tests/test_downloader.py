@@ -311,6 +311,55 @@ class DownloaderTests(unittest.TestCase):
         self.assertEqual(actual.title, 'demo')
         fallback.assert_called_once()
 
+    def test_download_video_emits_progress_when_switching_to_douyin_browser_fallback(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            job_dir = root / 'job-1'
+            job_dir.mkdir()
+            settings = Settings(
+                output_dir=root,
+                cookies_file=None,
+                cookies_from_browser=None,
+                ffmpeg_cmd=('ffmpeg',),
+                ytdlp_cmd=('yt-dlp',),
+                whisper_model='small',
+                whisper_device='cpu',
+                openclaw_token=None,
+            )
+            expected = SimpleNamespace(
+                source_url='https://v.douyin.com/demo/',
+                title='demo',
+                video_path=job_dir / 'demo.mp4',
+                job_dir=job_dir,
+            )
+            progress_updates = []
+
+            with patch(
+                'douyin_pipeline.downloader._download_with_ytdlp',
+                side_effect=RuntimeError('Video download failed.\nstderr: Fresh cookies (not necessarily logged in) are needed'),
+            ), patch(
+                'douyin_pipeline.douyin_browser.download_with_browser',
+                return_value=expected,
+            ):
+                actual = download_video(
+                    'https://v.douyin.com/demo/',
+                    settings,
+                    job_dir=job_dir,
+                    progress_callback=progress_updates.append,
+                )
+
+        self.assertEqual(actual.title, 'demo')
+        self.assertEqual(
+            progress_updates,
+            [
+                {
+                    'phase': 'downloading',
+                    'progress_percent': 14.0,
+                    'detail': 'yt-dlp 失败，正在切换浏览器回退下载。',
+                }
+            ],
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
