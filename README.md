@@ -355,10 +355,22 @@ Telegram 机器人支持作为任务入口。
 行为：
 
 - 给机器人发送抖音、Bilibili、小红书、快手或 YouTube 链接、完整分享文案
-- 机器人直接执行 `download + transcribe`
+- 先通过 Inline Keyboard 选择“快速转写”“高精度转写”或“只下载视频”
+- 转写模式继续执行 `download + transcribe`，完成后回发转写文本
+- “只下载视频”不会进入转写；下载完成后也不会自动上传视频，而是在原会话显示“发送原视频 / 不发送”
+- 只有发起任务的用户在原会话点击“发送原视频”后才会上传；“不发送”只做简短确认
+- 确认按钮绑定 chat、user、任务和消息，过期、重复点击、跨会话或跨用户点击都不会重复或错发视频
 - 处理中会按阶段回推任务进度
 - 完成后回发任务摘要、转写预览和 `.txt` 文件
 - 可以由 Web 页面统一托管和配置，无需单独维护脚本参数
+
+文件限制与失败处理：
+
+- 本项目当前使用 Telegram 官方云端 Bot API。官方云端上传上限为 `50 MB`；本项目按 `50000000` 字节在上传前主动拦截，避免静默失败
+- 超限时会明确提示文件大小和上限，文件仍保留在任务输出目录，可从 Web 页面下载；不会自动上传到第三方文件托管
+- 文件已被清理、确认超时、上传失败时都会在原会话明确提示；上传失败可使用原按钮重试
+- Telegram 官方自托管 Local Bot API 可上传至 `2000 MB`，但当前项目尚未接入该模式，不能仅靠调大环境变量绕过云端上限
+- 官方限制说明：[Bot API 文件发送](https://core.telegram.org/bots/api#sending-files)、[Local Bot API](https://core.telegram.org/bots/features#local-bot-api)
 
 环境变量：
 
@@ -366,6 +378,8 @@ Telegram 机器人支持作为任务入口。
 - `TELEGRAM_ALLOWED_CHAT_IDS`
 - `DOUYIN_PUBLIC_BASE_URL`
 - `TELEGRAM_STATE_PATH`
+- `TELEGRAM_VIDEO_MAX_BYTES`：主动发送上限，只能设置为不超过 `50000000` 的正整数
+- `TELEGRAM_VIDEO_CONFIRMATION_TTL_SECONDS`：发送确认按钮有效期，默认 `3600` 秒
 
 CLI：
 
@@ -396,6 +410,26 @@ douyin-telegram --token <your_bot_token>
 - `TELEGRAM_ALLOWED_CHAT_IDS`
 - `DOUYIN_PUBLIC_BASE_URL`
 - `TELEGRAM_STATE_PATH`
+- `TELEGRAM_VIDEO_MAX_BYTES`
+- `TELEGRAM_VIDEO_CONFIRMATION_TTL_SECONDS`
+
+### Telegram 功能升级
+
+已有部署升级时，保留服务器上的 `.env`、`output/` 和 cookies 文件，然后在项目目录执行：
+
+```bash
+git pull --ff-only
+bash ./scripts/one_click_deploy.sh
+```
+
+Docker 部署可使用：
+
+```bash
+git pull --ff-only
+docker compose up --build -d web telegram
+```
+
+升级前建议记录当前提交 `git rev-parse HEAD` 作为回滚点。机器人状态文件会兼容旧格式；新版本会在其中增加待发送确认记录，请不要把该运行时文件提交到 Git。
 
 ## 输出结构
 

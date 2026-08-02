@@ -13,9 +13,12 @@ from douyin_pipeline.runtime_config import (
     update_telegram_web_config,
 )
 from douyin_pipeline.telegram_bot import (
+    DEFAULT_TELEGRAM_UPLOAD_LIMIT_BYTES,
+    DEFAULT_VIDEO_CONFIRMATION_TTL_SECONDS,
     TelegramBotClient,
     TelegramBotRunner,
     TelegramBotSettings,
+    _positive_int_env,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +80,14 @@ class TelegramManager:
                 poll_timeout=resolved.poll_timeout,
                 retry_delay=resolved.retry_delay,
                 progress_updates=resolved.progress_updates,
+                video_upload_limit_bytes=min(
+                    _positive_int_env("TELEGRAM_VIDEO_MAX_BYTES", DEFAULT_TELEGRAM_UPLOAD_LIMIT_BYTES),
+                    DEFAULT_TELEGRAM_UPLOAD_LIMIT_BYTES,
+                ),
+                video_confirmation_ttl_seconds=_positive_int_env(
+                    "TELEGRAM_VIDEO_CONFIRMATION_TTL_SECONDS",
+                    DEFAULT_VIDEO_CONFIRMATION_TTL_SECONDS,
+                ),
             )
             client = TelegramBotClient(bot_settings)
             profile = client.get_me()

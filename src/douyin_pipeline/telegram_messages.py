@@ -131,6 +131,35 @@ def build_document_send_failed_text(error: Exception) -> str:
     return f"文本文件发送失败：{error}"
 
 
+def build_video_send_confirmation_text(job_id: str, file_name: str, file_size: int) -> str:
+    return (
+        "视频已下载完成，尚未上传到 Telegram。\n"
+        f"任务 ID：{job_id}\n"
+        f"文件：{file_name}\n"
+        f"大小：{format_file_size(file_size)}\n"
+        "是否发送原视频？"
+    )
+
+
+def build_video_too_large_text(job_id: str, file_size: int, limit_bytes: int) -> str:
+    return (
+        "视频已下载完成，但没有上传到 Telegram。\n"
+        f"任务 ID：{job_id}\n"
+        f"文件大小：{format_file_size(file_size)}\n"
+        f"当前 Telegram Bot API 发送上限：{format_file_size(limit_bytes)}。\n"
+        "文件仍保留在任务输出目录，可通过网页下载。"
+    )
+
+
+def format_file_size(size_bytes: int) -> str:
+    size = max(int(size_bytes), 0)
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
 def build_public_links(public_job: dict[str, Any], base_url: str) -> list[str]:
     label_mapping = {
         "Video": "视频",

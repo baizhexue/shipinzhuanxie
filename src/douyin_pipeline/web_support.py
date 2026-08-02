@@ -120,7 +120,7 @@ def openclaw_auth_error(response_class, request, settings: Settings):
 async def maybe_sweep_stale_jobs(app, run_in_threadpool, *, force: bool = False) -> None:
     last_sweep = float(getattr(app.state, "last_stale_sweep_monotonic", 0.0) or 0.0)
     now = time.monotonic()
-    if not force and (now - last_sweep) < STALE_SWEEP_INTERVAL_SECONDS:
+    if not force and last_sweep > 0 and (now - last_sweep) < STALE_SWEEP_INTERVAL_SECONDS:
         return
 
     swept = await run_in_threadpool(sweep_stale_jobs, app.state.settings.output_dir)

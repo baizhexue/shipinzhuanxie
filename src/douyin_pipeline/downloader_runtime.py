@@ -95,7 +95,7 @@ def build_ytdlp_process_env(js_runtime: str) -> Optional[dict[str, str]]:
     if not runtime_path:
         return None
 
-    runtime_dir = str(Path(runtime_path).expanduser().resolve().parent)
+    runtime_dir = str(Path(runtime_path).expanduser().parent)
     env = os.environ.copy()
     existing_path = env.get("PATH", "")
     env["PATH"] = runtime_dir if not existing_path else f"{runtime_dir}{os.pathsep}{existing_path}"

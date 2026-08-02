@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 from time import monotonic, sleep, time
 from typing import Any, Iterable, Optional
 import json
@@ -40,6 +40,8 @@ from douyin_pipeline.telegram_messages import (
     build_mode_selection_text,
     build_success_summary_text,
     build_transcript_caption,
+    build_video_send_confirmation_text,
+    build_video_too_large_text,
     build_web_missing_text,
     phase_progress_message,
     resolve_transcript_file,
@@ -54,12 +56,16 @@ DEFAULT_POLL_TIMEOUT = 25
 DEFAULT_RETRY_DELAY = 3.0
 MODE_CALLBACK_PREFIX = "txmode:"
 SUMMARY_CALLBACK_PREFIX = "txsummary:"
+VIDEO_CALLBACK_PREFIX = "txvideo:"
 MAX_PENDING_SELECTIONS = 20
+MAX_PENDING_VIDEO_SENDS = 100
+DEFAULT_VIDEO_CONFIRMATION_TTL_SECONDS = 3600
+DEFAULT_TELEGRAM_UPLOAD_LIMIT_BYTES = 50_000_000
 TRANSCRIBE_PROGRESS_MIN_INCREMENT = 1.0
 TRANSCRIBE_PROGRESS_MIN_INTERVAL_SECONDS = 1.0
 CHAT_ACTION_INTERVAL_SECONDS = 1.0
 TELEGRAM_API_REQUEST_TIMEOUT_SECONDS = 8
-TELEGRAM_API_UPLOAD_TIMEOUT_SECONDS = 45
+TELEGRAM_API_UPLOAD_TIMEOUT_SECONDS = 300
 logger = logging.getLogger(__name__)
 
 
@@ -94,6 +100,8 @@ class TelegramBotSettings:
     poll_timeout: int = DEFAULT_POLL_TIMEOUT
     retry_delay: float = DEFAULT_RETRY_DELAY
     progress_updates: bool = True
+    video_upload_limit_bytes: int = DEFAULT_TELEGRAM_UPLOAD_LIMIT_BYTES
+    video_confirmation_ttl_seconds: int = DEFAULT_VIDEO_CONFIRMATION_TTL_SECONDS
 
 
 def load_telegram_settings(
@@ -127,6 +135,14 @@ def load_telegram_settings(
         if env_progress_updates == ""
         else env_progress_updates.strip().lower() not in {"0", "false", "no", "off"}
     )
+    resolved_upload_limit = _positive_int_env(
+        "TELEGRAM_VIDEO_MAX_BYTES",
+        DEFAULT_TELEGRAM_UPLOAD_LIMIT_BYTES,
+    )
+    resolved_confirmation_ttl = _positive_int_env(
+        "TELEGRAM_VIDEO_CONFIRMATION_TTL_SECONDS",
+        DEFAULT_VIDEO_CONFIRMATION_TTL_SECONDS,
+    )
 
     return TelegramBotSettings(
         token=resolved_token,
@@ -136,6 +152,8 @@ def load_telegram_settings(
         poll_timeout=max(int(poll_timeout), 1),
         retry_delay=max(float(retry_delay), 1.0),
         progress_updates=bool(resolved_progress_updates),
+        video_upload_limit_bytes=min(resolved_upload_limit, DEFAULT_TELEGRAM_UPLOAD_LIMIT_BYTES),
+        video_confirmation_ttl_seconds=resolved_confirmation_ttl,
     )
 
 
@@ -217,6 +235,7 @@ class TelegramBotRunner:
         self._bot_settings = bot_settings
         self._client = client
         self._state = _load_state(bot_settings.state_path)
+        self._state_lock = RLock()
         self._stop_requested = False
 
     def request_stop(self) -> None:
@@ -252,8 +271,9 @@ class TelegramBotRunner:
             if self._stop_requested:
                 return
             update_id = int(update["update_id"])
-            self._state["offset"] = update_id + 1
-            _save_state(self._bot_settings.state_path, self._state)
+            with self._state_lock:
+                self._state["offset"] = update_id + 1
+                _save_state(self._bot_settings.state_path, self._state)
             self._handle_update(update)
 
     def _handle_update(self, update: dict[str, Any]) -> None:
@@ -268,6 +288,8 @@ class TelegramBotRunner:
 
         chat = message.get("chat") or {}
         chat_id = int(chat.get("id"))
+        from_user = message.get("from") or {}
+        user_id = int(from_user.get("id") or chat_id)
         text = _extract_message_text(message)
 
         if self._bot_settings.allowed_chat_ids and chat_id not in self._bot_settings.allowed_chat_ids:
@@ -296,7 +318,7 @@ class TelegramBotRunner:
             self._client.send_message(chat_id, build_help_text())
             return
 
-        request_id = self._create_pending_request(chat_id, normalized)
+        request_id = self._create_pending_request(chat_id, user_id, normalized)
         self._client.send_message(
             chat_id,
             build_mode_selection_text(),
@@ -310,6 +332,7 @@ class TelegramBotRunner:
         chat = message.get("chat") or {}
         from_user = callback_query.get("from") or {}
         chat_id = int(chat.get("id") or from_user.get("id") or 0)
+        user_id = int(from_user.get("id") or 0)
 
         if self._bot_settings.allowed_chat_ids and chat_id not in self._bot_settings.allowed_chat_ids:
             logger.info("telegram bot ignored unauthorized callback chat_id=%s", chat_id)
@@ -323,6 +346,7 @@ class TelegramBotRunner:
                 callback_query,
                 callback_id=callback_id,
                 chat_id=chat_id,
+                user_id=user_id,
                 selection=mode_selection,
             )
             return
@@ -333,7 +357,19 @@ class TelegramBotRunner:
                 callback_query,
                 callback_id=callback_id,
                 chat_id=chat_id,
+                user_id=user_id,
                 selection=summary_selection,
+            )
+            return
+
+        video_selection = _parse_video_callback_data(data)
+        if video_selection is not None:
+            self._handle_video_callback(
+                callback_query,
+                callback_id=callback_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                selection=video_selection,
             )
             return
 
@@ -346,13 +382,14 @@ class TelegramBotRunner:
         *,
         callback_id: str,
         chat_id: int,
+        user_id: int,
         selection: tuple[str, str],
     ) -> None:
         message = callback_query.get("message") or {}
         message_id = _extract_message_id(message)
         request_id, mode = selection
-        pending_request = self._pop_pending_request(request_id)
-        if pending_request is None or int(pending_request.get("chat_id") or 0) != chat_id:
+        pending_request = self._pop_pending_request(request_id, chat_id=chat_id, user_id=user_id)
+        if pending_request is None:
             if callback_id:
                 self._client.answer_callback_query(callback_id, text=build_mode_expired_text(), show_alert=False)
             return
@@ -376,13 +413,13 @@ class TelegramBotRunner:
         if mode == "download" or not self._app_settings.deepseek_api_key:
             thread = Thread(
                 target=self._process_message_job,
-                args=(chat_id, raw_input, mode, None, message_id),
+                args=(chat_id, raw_input, mode, None, message_id, user_id),
                 daemon=True,
             )
             thread.start()
             return
 
-        summary_request_id = self._create_pending_summary_request(chat_id, raw_input, mode)
+        summary_request_id = self._create_pending_summary_request(chat_id, user_id, raw_input, mode)
         self._replace_status_message(
             chat_id,
             build_summary_selection_text(mode_label),
@@ -396,13 +433,14 @@ class TelegramBotRunner:
         *,
         callback_id: str,
         chat_id: int,
+        user_id: int,
         selection: tuple[str, str],
     ) -> None:
         message = callback_query.get("message") or {}
         message_id = _extract_message_id(message)
         request_id, style = selection
-        pending_summary = self._pop_pending_summary_request(request_id)
-        if pending_summary is None or int(pending_summary.get("chat_id") or 0) != chat_id:
+        pending_summary = self._pop_pending_summary_request(request_id, chat_id=chat_id, user_id=user_id)
+        if pending_summary is None:
             if callback_id:
                 self._client.answer_callback_query(callback_id, text=build_summary_expired_text(), show_alert=False)
             return
@@ -419,6 +457,7 @@ class TelegramBotRunner:
                 str(pending_summary["mode"]),
                 None if style == "skip" else style,
                 message_id,
+                user_id,
             ),
             daemon=True,
         )
@@ -431,6 +470,7 @@ class TelegramBotRunner:
         mode: str,
         summary_style: Optional[str],
         status_message_id: Optional[int] = None,
+        user_id: Optional[int] = None,
     ) -> None:
         logger.info(
             "telegram bot received job chat_id=%s mode=%s summary_style=%s",
@@ -498,7 +538,12 @@ class TelegramBotRunner:
 
         logger.info("telegram bot job completed chat_id=%s job_id=%s", chat_id, prepared_job.job_dir.name)
         activity_heartbeat.stop()
-        self._send_success(chat_id, manifest, progress_reporter=progress_reporter)
+        self._send_success(
+            chat_id,
+            manifest,
+            progress_reporter=progress_reporter,
+            user_id=user_id or chat_id,
+        )
         if action == "run" and summary_style:
             self._process_summary_job(
                 chat_id,
@@ -526,6 +571,7 @@ class TelegramBotRunner:
         manifest: dict[str, Any],
         *,
         progress_reporter: Optional["TelegramProgressReporter"] = None,
+        user_id: Optional[int] = None,
     ) -> None:
         public_job = to_public_job(manifest)
         summary_text = build_success_summary_text(public_job, self._bot_settings.public_base_url)
@@ -533,6 +579,10 @@ class TelegramBotRunner:
             progress_reporter.complete(summary_text)
         else:
             self._client.send_message(chat_id, summary_text)
+
+        if str(manifest.get("action") or "") == "download":
+            self._offer_video_send(chat_id, user_id or chat_id, manifest)
+            return
 
         absolute_transcript_path = resolve_transcript_file(
             self._app_settings.output_dir,
@@ -544,6 +594,162 @@ class TelegramBotRunner:
                 self._client.send_document(chat_id, absolute_transcript_path, caption=caption)
             except Exception as exc:
                 self._client.send_message(chat_id, build_document_send_failed_text(exc))
+
+    def _offer_video_send(self, chat_id: int, user_id: int, manifest: dict[str, Any]) -> None:
+        job_id = str(manifest.get("job_id") or "")
+        video_path = _resolve_output_file(self._app_settings.output_dir, manifest.get("video_path"))
+        if not job_id or video_path is None:
+            self._client.send_message(chat_id, "视频已下载，但文件记录不存在或文件已被清理，无法发送。")
+            return
+
+        file_size = video_path.stat().st_size
+        if file_size > self._bot_settings.video_upload_limit_bytes:
+            self._client.send_message(
+                chat_id,
+                build_video_too_large_text(
+                    job_id,
+                    file_size,
+                    self._bot_settings.video_upload_limit_bytes,
+                ),
+            )
+            return
+
+        request_id = self._create_pending_video_send(
+            chat_id=chat_id,
+            user_id=user_id,
+            job_id=job_id,
+            video_path=str(video_path.relative_to(self._app_settings.output_dir.resolve())),
+            file_size=file_size,
+        )
+        result = self._client.send_message(
+            chat_id,
+            build_video_send_confirmation_text(job_id, video_path.name, file_size),
+            reply_markup=_build_video_confirmation_markup(request_id),
+        )
+        self._set_video_confirmation_message_id(request_id, _extract_message_id(result))
+
+    def _handle_video_callback(
+        self,
+        callback_query: dict[str, Any],
+        *,
+        callback_id: str,
+        chat_id: int,
+        user_id: int,
+        selection: tuple[str, str],
+    ) -> None:
+        message_id = _extract_message_id(callback_query.get("message") or {})
+        request_id, action = selection
+        pending, outcome = self._claim_pending_video_send(
+            request_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            message_id=message_id,
+            action=action,
+        )
+        if pending is None:
+            callback_text = {
+                "unauthorized": "这个按钮不属于当前用户或会话。",
+                "expired": "发送确认已超时，请重新提交下载任务。",
+                "sending": "视频正在发送，请勿重复点击。",
+                "sent": "视频已经发送过了。",
+                "skipped": "已选择不发送。",
+            }.get(outcome, "这个按钮已经失效。")
+            if callback_id:
+                self._client.answer_callback_query(callback_id, text=callback_text, show_alert=False)
+            if outcome == "expired":
+                self._replace_status_message(
+                    chat_id,
+                    "发送确认已超时，原视频没有上传到 Telegram。",
+                    message_id=message_id,
+                )
+            return
+
+        if action == "skip":
+            if callback_id:
+                self._client.answer_callback_query(callback_id, text="已选择不发送。", show_alert=False)
+            self._replace_status_message(
+                chat_id,
+                f"已选择不发送原视频。\n任务 ID：{pending['job_id']}",
+                message_id=message_id,
+            )
+            return
+
+        if callback_id:
+            self._client.answer_callback_query(callback_id, text="开始发送原视频。", show_alert=False)
+        self._replace_status_message(
+            chat_id,
+            f"正在发送原视频，请勿重复点击。\n任务 ID：{pending['job_id']}",
+            message_id=message_id,
+        )
+        Thread(
+            target=self._send_confirmed_video,
+            args=(request_id, chat_id, message_id),
+            daemon=True,
+        ).start()
+
+    def _send_confirmed_video(
+        self,
+        request_id: str,
+        chat_id: int,
+        confirmation_message_id: Optional[int],
+    ) -> None:
+        pending = self._get_pending_video_send(request_id)
+        if pending is None or str(pending.get("status")) != "sending":
+            return
+        video_path = _resolve_output_file(self._app_settings.output_dir, pending.get("video_path"))
+        if video_path is None:
+            self._finish_pending_video_send(request_id, "missing")
+            self._replace_status_message(
+                chat_id,
+                "原视频文件已被清理，无法发送。",
+                message_id=confirmation_message_id,
+            )
+            return
+
+        file_size = video_path.stat().st_size
+        if file_size > self._bot_settings.video_upload_limit_bytes:
+            self._finish_pending_video_send(request_id, "too_large")
+            self._replace_status_message(
+                chat_id,
+                build_video_too_large_text(
+                    str(pending["job_id"]),
+                    file_size,
+                    self._bot_settings.video_upload_limit_bytes,
+                ),
+                message_id=confirmation_message_id,
+            )
+            return
+
+        try:
+            if video_path.suffix.lower() == ".mp4":
+                self._client.send_video(
+                    chat_id,
+                    video_path,
+                    caption=f"原视频 - {pending['job_id']}",
+                )
+            else:
+                self._client.send_document(
+                    chat_id,
+                    video_path,
+                    caption=f"原视频 - {pending['job_id']}",
+                )
+        except Exception as exc:
+            logger.exception("telegram video send failed chat_id=%s job_id=%s", chat_id, pending["job_id"])
+            self._finish_pending_video_send(request_id, "pending")
+            self._replace_status_message(
+                chat_id,
+                f"原视频发送失败：{exc}\n可以点击按钮重试，文件不会上传到第三方。",
+                message_id=confirmation_message_id,
+                reply_markup=_build_video_confirmation_markup(request_id),
+            )
+            return
+
+        self._finish_pending_video_send(request_id, "sent")
+        self._replace_status_message(
+            chat_id,
+            f"原视频已发送。\n任务 ID：{pending['job_id']}",
+            message_id=confirmation_message_id,
+        )
 
     def _process_summary_job(
         self,
@@ -667,46 +873,157 @@ class TelegramBotRunner:
                 )
         return self._client.send_message(chat_id, text, reply_markup=reply_markup)
 
-    def _create_pending_request(self, chat_id: int, raw_input: str) -> str:
-        pending_requests = dict(self._state.get("pending_requests") or {})
-        pending_requests = _prune_pending_requests(pending_requests)
-        request_id = uuid.uuid4().hex[:10]
-        pending_requests[request_id] = {
-            "chat_id": chat_id,
-            "raw_input": raw_input,
-            "created_at": time(),
-        }
-        self._state["pending_requests"] = pending_requests
-        _save_state(self._bot_settings.state_path, self._state)
-        return request_id
+    def _create_pending_request(self, chat_id: int, user_id: int, raw_input: str) -> str:
+        with self._state_lock:
+            pending_requests = dict(self._state.get("pending_requests") or {})
+            pending_requests = _prune_pending_requests(pending_requests)
+            request_id = uuid.uuid4().hex[:10]
+            pending_requests[request_id] = {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "raw_input": raw_input,
+                "created_at": time(),
+            }
+            self._state["pending_requests"] = pending_requests
+            _save_state(self._bot_settings.state_path, self._state)
+            return request_id
 
-    def _pop_pending_request(self, request_id: str) -> Optional[dict[str, Any]]:
-        pending_requests = dict(self._state.get("pending_requests") or {})
-        pending_request = pending_requests.pop(request_id, None)
-        self._state["pending_requests"] = pending_requests
-        _save_state(self._bot_settings.state_path, self._state)
-        return pending_request
+    def _pop_pending_request(
+        self,
+        request_id: str,
+        *,
+        chat_id: int,
+        user_id: int,
+    ) -> Optional[dict[str, Any]]:
+        with self._state_lock:
+            pending_requests = dict(self._state.get("pending_requests") or {})
+            pending_request = pending_requests.get(request_id)
+            if not isinstance(pending_request, dict) or (
+                int(pending_request.get("chat_id") or 0) != chat_id
+                or int(pending_request.get("user_id") or 0) != user_id
+            ):
+                return None
+            pending_requests.pop(request_id, None)
+            self._state["pending_requests"] = pending_requests
+            _save_state(self._bot_settings.state_path, self._state)
+            return pending_request
 
-    def _create_pending_summary_request(self, chat_id: int, raw_input: str, mode: str) -> str:
-        pending_summaries = dict(self._state.get("pending_summaries") or {})
-        pending_summaries = _prune_pending_summaries(pending_summaries)
-        request_id = uuid.uuid4().hex[:10]
-        pending_summaries[request_id] = {
-            "chat_id": chat_id,
-            "raw_input": raw_input,
-            "mode": mode,
-            "created_at": time(),
-        }
-        self._state["pending_summaries"] = pending_summaries
-        _save_state(self._bot_settings.state_path, self._state)
-        return request_id
+    def _create_pending_summary_request(self, chat_id: int, user_id: int, raw_input: str, mode: str) -> str:
+        with self._state_lock:
+            pending_summaries = dict(self._state.get("pending_summaries") or {})
+            pending_summaries = _prune_pending_summaries(pending_summaries)
+            request_id = uuid.uuid4().hex[:10]
+            pending_summaries[request_id] = {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "raw_input": raw_input,
+                "mode": mode,
+                "created_at": time(),
+            }
+            self._state["pending_summaries"] = pending_summaries
+            _save_state(self._bot_settings.state_path, self._state)
+            return request_id
 
-    def _pop_pending_summary_request(self, request_id: str) -> Optional[dict[str, Any]]:
-        pending_summaries = dict(self._state.get("pending_summaries") or {})
-        pending_summary = pending_summaries.pop(request_id, None)
-        self._state["pending_summaries"] = pending_summaries
-        _save_state(self._bot_settings.state_path, self._state)
-        return pending_summary
+    def _pop_pending_summary_request(
+        self,
+        request_id: str,
+        *,
+        chat_id: int,
+        user_id: int,
+    ) -> Optional[dict[str, Any]]:
+        with self._state_lock:
+            pending_summaries = dict(self._state.get("pending_summaries") or {})
+            pending_summary = pending_summaries.get(request_id)
+            if not isinstance(pending_summary, dict) or (
+                int(pending_summary.get("chat_id") or 0) != chat_id
+                or int(pending_summary.get("user_id") or 0) != user_id
+            ):
+                return None
+            pending_summaries.pop(request_id, None)
+            self._state["pending_summaries"] = pending_summaries
+            _save_state(self._bot_settings.state_path, self._state)
+            return pending_summary
+
+    def _create_pending_video_send(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        job_id: str,
+        video_path: str,
+        file_size: int,
+    ) -> str:
+        with self._state_lock:
+            pending_sends = _prune_pending_video_sends(
+                dict(self._state.get("pending_video_sends") or {}),
+                self._bot_settings.video_confirmation_ttl_seconds,
+            )
+            request_id = uuid.uuid4().hex[:12]
+            pending_sends[request_id] = {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "job_id": job_id,
+                "video_path": video_path,
+                "file_size": int(file_size),
+                "confirmation_message_id": None,
+                "status": "pending",
+                "created_at": time(),
+            }
+            self._state["pending_video_sends"] = pending_sends
+            _save_state(self._bot_settings.state_path, self._state)
+            return request_id
+
+    def _set_video_confirmation_message_id(self, request_id: str, message_id: Optional[int]) -> None:
+        with self._state_lock:
+            pending = (self._state.get("pending_video_sends") or {}).get(request_id)
+            if not isinstance(pending, dict):
+                return
+            pending["confirmation_message_id"] = message_id
+            _save_state(self._bot_settings.state_path, self._state)
+
+    def _claim_pending_video_send(
+        self,
+        request_id: str,
+        *,
+        chat_id: int,
+        user_id: int,
+        message_id: Optional[int],
+        action: str,
+    ) -> tuple[Optional[dict[str, Any]], str]:
+        with self._state_lock:
+            pending = (self._state.get("pending_video_sends") or {}).get(request_id)
+            if not isinstance(pending, dict):
+                return None, "missing"
+            if (
+                int(pending.get("chat_id") or 0) != chat_id
+                or int(pending.get("user_id") or 0) != user_id
+                or pending.get("confirmation_message_id") != message_id
+            ):
+                return None, "unauthorized"
+            if time() - float(pending.get("created_at") or 0) > self._bot_settings.video_confirmation_ttl_seconds:
+                pending["status"] = "expired"
+                _save_state(self._bot_settings.state_path, self._state)
+                return None, "expired"
+            status = str(pending.get("status") or "missing")
+            if status != "pending":
+                return None, status
+            pending["status"] = "skipped" if action == "skip" else "sending"
+            _save_state(self._bot_settings.state_path, self._state)
+            return dict(pending), pending["status"]
+
+    def _get_pending_video_send(self, request_id: str) -> Optional[dict[str, Any]]:
+        with self._state_lock:
+            pending = (self._state.get("pending_video_sends") or {}).get(request_id)
+            return dict(pending) if isinstance(pending, dict) else None
+
+    def _finish_pending_video_send(self, request_id: str, status: str) -> None:
+        with self._state_lock:
+            pending = (self._state.get("pending_video_sends") or {}).get(request_id)
+            if not isinstance(pending, dict):
+                return
+            pending["status"] = status
+            pending["updated_at"] = time()
+            _save_state(self._bot_settings.state_path, self._state)
 
     def _write_summary_status(
         self,
@@ -861,6 +1178,18 @@ class TelegramBotClient:
             fields["caption"] = truncate_text(caption, 900)
         return self._multipart_request("sendDocument", fields=fields, file_field="document", file_path=document_path)
 
+    def send_video(
+        self,
+        chat_id: int,
+        video_path: Path,
+        *,
+        caption: Optional[str] = None,
+    ) -> dict[str, Any]:
+        fields = {"chat_id": str(chat_id), "supports_streaming": "true"}
+        if caption:
+            fields["caption"] = truncate_text(caption, 900)
+        return self._multipart_request("sendVideo", fields=fields, file_field="video", file_path=video_path)
+
     def _json_request(
         self,
         method: str,
@@ -963,15 +1292,15 @@ def _extract_message_text(message: dict[str, Any]) -> str:
 
 def _load_state(state_path: Path) -> dict[str, Any]:
     if not state_path.exists():
-        return {"offset": None, "pending_requests": {}, "pending_summaries": {}}
+        return {"offset": None, "pending_requests": {}, "pending_summaries": {}, "pending_video_sends": {}}
 
     try:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"offset": None, "pending_requests": {}, "pending_summaries": {}}
+        return {"offset": None, "pending_requests": {}, "pending_summaries": {}, "pending_video_sends": {}}
 
     if not isinstance(payload, dict):
-        return {"offset": None, "pending_requests": {}, "pending_summaries": {}}
+        return {"offset": None, "pending_requests": {}, "pending_summaries": {}, "pending_video_sends": {}}
 
     pending_requests = payload.get("pending_requests")
     if not isinstance(pending_requests, dict):
@@ -979,19 +1308,28 @@ def _load_state(state_path: Path) -> dict[str, Any]:
     pending_summaries = payload.get("pending_summaries")
     if not isinstance(pending_summaries, dict):
         pending_summaries = {}
+    pending_video_sends = payload.get("pending_video_sends")
+    if not isinstance(pending_video_sends, dict):
+        pending_video_sends = {}
     return {
         "offset": payload.get("offset"),
         "pending_requests": _prune_pending_requests(pending_requests),
         "pending_summaries": _prune_pending_summaries(pending_summaries),
+        "pending_video_sends": _prune_pending_video_sends(
+            pending_video_sends,
+            DEFAULT_VIDEO_CONFIRMATION_TTL_SECONDS,
+        ),
     }
 
 
 def _save_state(state_path: Path, payload: dict[str, Any]) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
+    temporary_path = state_path.with_suffix(f"{state_path.suffix}.tmp")
+    temporary_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    temporary_path.replace(state_path)
 
 
 def _parse_allowed_chat_ids(raw_value: str) -> list[int]:
@@ -1002,6 +1340,21 @@ def _parse_allowed_chat_ids(raw_value: str) -> list[int]:
             continue
         values.append(int(text))
     return values
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    import os
+
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer.") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
 
 
 def _normalize_public_base_url(value: Optional[str]) -> Optional[str]:
@@ -1052,6 +1405,15 @@ def _build_summary_selection_markup(request_id: str) -> dict[str, Any]:
     }
 
 
+def _build_video_confirmation_markup(request_id: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [[
+            {"text": "发送原视频", "callback_data": f"{VIDEO_CALLBACK_PREFIX}send:{request_id}"},
+            {"text": "不发送", "callback_data": f"{VIDEO_CALLBACK_PREFIX}skip:{request_id}"},
+        ]]
+    }
+
+
 def _parse_mode_callback_data(data: str) -> Optional[tuple[str, str]]:
     if not data.startswith(MODE_CALLBACK_PREFIX):
         return None
@@ -1076,6 +1438,16 @@ def _parse_summary_callback_data(data: str) -> Optional[tuple[str, str]]:
     return request_id, style
 
 
+def _parse_video_callback_data(data: str) -> Optional[tuple[str, str]]:
+    if not data.startswith(VIDEO_CALLBACK_PREFIX):
+        return None
+    payload = data[len(VIDEO_CALLBACK_PREFIX):]
+    action, separator, request_id = payload.partition(":")
+    if not separator or not request_id or action not in {"send", "skip"}:
+        return None
+    return request_id, action
+
+
 def _prune_pending_requests(pending_requests: dict[str, Any]) -> dict[str, Any]:
     normalized_items: list[tuple[str, dict[str, Any]]] = []
     for request_id, payload in pending_requests.items():
@@ -1091,6 +1463,7 @@ def _prune_pending_requests(pending_requests: dict[str, Any]) -> dict[str, Any]:
                 str(request_id),
                 {
                     "chat_id": int(chat_id),
+                    "user_id": int(payload.get("user_id") or chat_id),
                     "raw_input": raw_input,
                     "created_at": created_at,
                 },
@@ -1117,6 +1490,7 @@ def _prune_pending_summaries(pending_summaries: dict[str, Any]) -> dict[str, Any
                 str(request_id),
                 {
                     "chat_id": int(chat_id),
+                    "user_id": int(payload.get("user_id") or chat_id),
                     "raw_input": raw_input,
                     "mode": mode,
                     "created_at": created_at,
@@ -1126,6 +1500,40 @@ def _prune_pending_summaries(pending_summaries: dict[str, Any]) -> dict[str, Any
 
     normalized_items.sort(key=lambda item: item[1]["created_at"], reverse=True)
     return dict(normalized_items[:MAX_PENDING_SELECTIONS])
+
+
+def _prune_pending_video_sends(
+    pending_sends: dict[str, Any],
+    ttl_seconds: int,
+) -> dict[str, Any]:
+    now = time()
+    normalized_items: list[tuple[str, dict[str, Any]]] = []
+    for request_id, payload in pending_sends.items():
+        if not isinstance(payload, dict):
+            continue
+        created_at = float(payload.get("created_at") or 0.0)
+        status = str(payload.get("status") or "")
+        if not created_at or now - created_at > max(ttl_seconds, 1) * 2:
+            continue
+        if status not in {"pending", "sending", "sent", "skipped", "expired", "missing", "too_large"}:
+            continue
+        normalized_items.append((str(request_id), dict(payload)))
+    normalized_items.sort(key=lambda item: float(item[1].get("created_at") or 0.0), reverse=True)
+    return dict(normalized_items[:MAX_PENDING_VIDEO_SENDS])
+
+
+def _resolve_output_file(output_dir: Path, relative_path: Any) -> Optional[Path]:
+    if not relative_path:
+        return None
+    output_root = output_dir.resolve()
+    candidate = (output_root / str(relative_path)).resolve()
+    try:
+        candidate.relative_to(output_root)
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
 
 
 def _resolve_mode_settings(base_settings: Settings, mode: str) -> tuple[Settings, str, str]:
@@ -1285,4 +1693,3 @@ class TelegramActivityHeartbeat:
             except Exception as exc:
                 logger.warning("telegram chat action failed chat_id=%s error=%s", self._chat_id, exc)
             self._stop_event.wait(self._interval_seconds)
-
