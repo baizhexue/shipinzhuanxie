@@ -192,7 +192,7 @@ class TelegramBotTests(unittest.TestCase):
             self.assertEqual(len(DummyThread.instances), 0)
             self.assertEqual(len(runner._state["pending_requests"]), 1)
 
-    def test_download_mode_starts_immediately_without_summary_step(self) -> None:
+    def test_download_mode_asks_delivery_then_starts_without_summary_step(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             client = FakeTelegramClient()
             runner = TelegramBotRunner(
@@ -221,10 +221,25 @@ class TelegramBotTests(unittest.TestCase):
                 )
 
             self.assertEqual(client.callback_answers, [("cb-1", "已选择只下载视频", False)])
-            self.assertEqual(len(DummyThread.instances), 1)
-            self.assertEqual(DummyThread.instances[0].args, (1001, "https://v.douyin.com/test/", "download", None, 5001, 1001))
+            self.assertEqual(len(DummyThread.instances), 0)
+            self.assertIn("是否把原视频发送到当前 Telegram 对话", client.edits[-1][2])
+            delivery_id = next(iter(runner._state["pending_deliveries"]))
 
-    def test_download_success_waits_for_inline_confirmation(self) -> None:
+            with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
+                runner._handle_update({"callback_query": {
+                    "id": "cb-2",
+                    "data": f"txdelivery:skip:{delivery_id}",
+                    "from": {"id": 1001},
+                    "message": {"message_id": 5001, "chat": {"id": 1001}},
+                }})
+
+            self.assertEqual(len(DummyThread.instances), 1)
+            self.assertEqual(
+                DummyThread.instances[0].args,
+                (1001, "https://v.douyin.com/test/", "download", None, 5001, 1001, False),
+            )
+
+    def test_download_success_sends_video_when_preselected(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir)
             job_dir = output_dir / "job-1"
@@ -252,14 +267,108 @@ class TelegramBotTests(unittest.TestCase):
                     "video_path": "job-1/demo.mp4",
                 },
                 user_id=2001,
+                send_video=True,
             )
 
-            self.assertEqual(client.videos, [])
-            self.assertIn("是否发送原视频", client.messages[-1][1])
-            buttons = client.messages[-1][2]["inline_keyboard"][0]
-            self.assertEqual([button["text"] for button in buttons], ["发送原视频", "不发送"])
+            self.assertEqual(client.videos, [(1001, video_path.resolve(), "原视频 - job-1")])
             pending = next(iter(runner._state["pending_video_sends"].values()))
             self.assertEqual((pending["chat_id"], pending["user_id"]), (1001, 2001))
+            self.assertEqual(pending["status"], "sent")
+
+    def test_delivery_selection_rejects_wrong_user_without_consuming_request(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(Path(tmp_dir)),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=Path(tmp_dir) / "state.json",
+                ),
+                client,
+            )
+            delivery_id = runner._create_pending_delivery_request(
+                1001, 2001, "https://v.douyin.com/test/", "fast"
+            )
+
+            runner._handle_update({"callback_query": {
+                "id": "wrong-user",
+                "data": f"txdelivery:send:{delivery_id}",
+                "from": {"id": 2002},
+                "message": {"message_id": 5001, "chat": {"id": 1001}},
+            }})
+
+            self.assertIn(delivery_id, runner._state["pending_deliveries"])
+            self.assertIn("已经失效", client.callback_answers[-1][1])
+
+    def test_delivery_selection_is_one_time_and_bound_to_task(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(Path(tmp_dir)),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=Path(tmp_dir) / "state.json",
+                ),
+                client,
+            )
+            delivery_id = runner._create_pending_delivery_request(
+                1001, 2001, "https://v.douyin.com/test/", "fast"
+            )
+            update = {"callback_query": {
+                "id": "delivery",
+                "data": f"txdelivery:send:{delivery_id}",
+                "from": {"id": 2001},
+                "message": {"message_id": 5001, "chat": {"id": 1001}},
+            }}
+
+            with patch("douyin_pipeline.telegram_bot.Thread", DummyThread):
+                runner._handle_update(update)
+                runner._handle_update(update)
+
+            self.assertEqual(len(DummyThread.instances), 1)
+            self.assertEqual(DummyThread.instances[0].args[-1], True)
+            self.assertIn("已经失效", client.callback_answers[-1][1])
+
+    def test_transcription_success_sends_transcript_and_preselected_video(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            job_dir = output_dir / "job-1"
+            job_dir.mkdir()
+            transcript_path = job_dir / "demo.txt"
+            transcript_path.write_text("transcript", encoding="utf-8")
+            video_path = job_dir / "demo.mp4"
+            video_path.write_bytes(b"video")
+            client = FakeTelegramClient()
+            runner = TelegramBotRunner(
+                _make_settings(output_dir),
+                TelegramBotSettings(
+                    token="token",
+                    allowed_chat_ids=(1001,),
+                    public_base_url=None,
+                    state_path=output_dir / "state.json",
+                ),
+                client,
+            )
+
+            runner._send_success(
+                1001,
+                {
+                    "job_id": "job-1",
+                    "action": "run",
+                    "status": "success",
+                    "transcript_path": "job-1/demo.txt",
+                    "video_path": "job-1/demo.mp4",
+                },
+                user_id=2001,
+                send_video=True,
+            )
+
+            self.assertEqual(client.documents, [(1001, transcript_path, "转写文本 - job-1")])
+            self.assertEqual(client.videos, [(1001, video_path.resolve(), "原视频 - job-1")])
 
     def test_video_confirmation_rejects_wrong_user_without_consuming_request(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -433,7 +542,7 @@ class TelegramBotTests(unittest.TestCase):
             self.assertEqual(runner._state["pending_video_sends"][request_id]["status"], "expired")
             self.assertIn("确认已超时", client.edits[-1][2])
 
-    def test_summary_selection_is_front_loaded_after_run_mode(self) -> None:
+    def test_delivery_selection_precedes_summary_for_run_mode(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             client = FakeTelegramClient()
             runner = TelegramBotRunner(
@@ -463,9 +572,21 @@ class TelegramBotTests(unittest.TestCase):
 
             self.assertEqual(client.callback_answers, [("cb-1", "已选择高精度转写", False)])
             self.assertEqual(len(DummyThread.instances), 0)
-            self.assertIn("接下来要不要自动总结", client.edits[-1][2])
+            self.assertIn("是否把原视频发送到当前 Telegram 对话", client.edits[-1][2])
             self.assertIsNotNone(client.edits[-1][3])
-            self.assertEqual(len(runner._state["pending_summaries"]), 1)
+            self.assertEqual(len(runner._state["pending_summaries"]), 0)
+            delivery_id = next(iter(runner._state["pending_deliveries"]))
+
+            runner._handle_update({"callback_query": {
+                "id": "cb-2",
+                "data": f"txdelivery:send:{delivery_id}",
+                "from": {"id": 1001},
+                "message": {"message_id": 5001, "chat": {"id": 1001}},
+            }})
+
+            self.assertIn("接下来要不要自动总结", client.edits[-1][2])
+            pending_summary = next(iter(runner._state["pending_summaries"].values()))
+            self.assertTrue(pending_summary["send_video"])
 
     def test_summary_callback_starts_job_with_selected_summary_style(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -486,6 +607,7 @@ class TelegramBotTests(unittest.TestCase):
                     "user_id": 1001,
                     "raw_input": "https://v.douyin.com/test/",
                     "mode": "accurate",
+                    "send_video": True,
                     "created_at": 1.0,
                 }
             }
@@ -505,7 +627,7 @@ class TelegramBotTests(unittest.TestCase):
             self.assertEqual(len(DummyThread.instances), 1)
             self.assertEqual(
                 DummyThread.instances[0].args,
-                (1001, "https://v.douyin.com/test/", "accurate", "plain", 5002, 1001),
+                (1001, "https://v.douyin.com/test/", "accurate", "plain", 5002, 1001, True),
             )
 
     def test_summary_callback_can_skip_summary_and_still_start_job(self) -> None:
@@ -546,7 +668,7 @@ class TelegramBotTests(unittest.TestCase):
             self.assertEqual(len(DummyThread.instances), 1)
             self.assertEqual(
                 DummyThread.instances[0].args,
-                (1001, "https://v.douyin.com/test/", "fast", None, 5003, 1001),
+                (1001, "https://v.douyin.com/test/", "fast", None, 5003, 1001, False),
             )
 
     def test_process_message_job_includes_summary_label_when_selected(self) -> None:
@@ -582,7 +704,13 @@ class TelegramBotTests(unittest.TestCase):
             self.assertIn("总结：知识型", client.messages[0][1])
             self.assertEqual(progress_reporter_cls.call_args.kwargs["progress_message_id"], 9001)
             progress_reporter_cls.return_value.dismiss.assert_not_called()
-            send_success.assert_called_once_with(1001, {"job_id": "job-1", "status": "success"}, progress_reporter=progress_reporter_cls.return_value, user_id=1001)
+            send_success.assert_called_once_with(
+                1001,
+                {"job_id": "job-1", "status": "success"},
+                progress_reporter=progress_reporter_cls.return_value,
+                user_id=1001,
+                send_video=False,
+            )
             process_summary_job.assert_called_once_with(1001, "job-1", "knowledge", progress_reporter=progress_reporter_cls.return_value)
 
     def test_process_message_job_continues_when_started_message_fails(self) -> None:

@@ -19,6 +19,8 @@ from douyin_pipeline.telegram_messages import (
     build_summary_selection_text,
     build_summary_started_text,
     build_transcript_caption,
+    build_video_delivery_expired_text,
+    build_video_delivery_selection_text,
     build_web_missing_text,
     format_clock,
     phase_progress_message,
@@ -35,7 +37,8 @@ class TelegramMessagesTests(unittest.TestCase):
         self.assertIn("抖音", text)
         self.assertIn("小红书", text)
         self.assertIn("/help", text)
-        self.assertIn("确认是否自动总结", text)
+        self.assertIn("是否发送原视频", text)
+        self.assertIn("是否自动总结", text)
 
     def test_build_web_missing_text_is_chinese(self) -> None:
         self.assertEqual(build_web_missing_text(), "网页地址还没有配置。")
@@ -48,6 +51,13 @@ class TelegramMessagesTests(unittest.TestCase):
 
     def test_build_mode_expired_text_is_chinese(self) -> None:
         self.assertEqual(build_mode_expired_text(), "这个选择已经失效了，请重新发送一次链接。")
+
+    def test_build_video_delivery_selection_is_actionable(self) -> None:
+        text = build_video_delivery_selection_text("快速转写")
+        self.assertIn("已选择：快速转写", text)
+        self.assertIn("是否把原视频发送到当前 Telegram 对话", text)
+        self.assertIn("不发送", text)
+        self.assertIn("已经失效", build_video_delivery_expired_text())
 
     def test_build_summary_selection_text_mentions_automatic_summary(self) -> None:
         text = build_summary_selection_text("高精度转写")

@@ -40,6 +40,8 @@ from douyin_pipeline.telegram_messages import (
     build_mode_selection_text,
     build_success_summary_text,
     build_transcript_caption,
+    build_video_delivery_expired_text,
+    build_video_delivery_selection_text,
     build_video_send_confirmation_text,
     build_video_too_large_text,
     build_web_missing_text,
@@ -55,6 +57,7 @@ DEFAULT_ALLOWED_UPDATES = ("message", "callback_query")
 DEFAULT_POLL_TIMEOUT = 25
 DEFAULT_RETRY_DELAY = 3.0
 MODE_CALLBACK_PREFIX = "txmode:"
+DELIVERY_CALLBACK_PREFIX = "txdelivery:"
 SUMMARY_CALLBACK_PREFIX = "txsummary:"
 VIDEO_CALLBACK_PREFIX = "txvideo:"
 MAX_PENDING_SELECTIONS = 20
@@ -362,6 +365,17 @@ class TelegramBotRunner:
             )
             return
 
+        delivery_selection = _parse_delivery_callback_data(data)
+        if delivery_selection is not None:
+            self._handle_delivery_callback(
+                callback_query,
+                callback_id=callback_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                selection=delivery_selection,
+            )
+            return
+
         video_selection = _parse_video_callback_data(data)
         if video_selection is not None:
             self._handle_video_callback(
@@ -405,21 +419,76 @@ class TelegramBotRunner:
                 )
 
         if mode == "cancel":
-            self._replace_status_message(chat_id, message_id, "这条任务已取消。")
+            self._replace_status_message(chat_id, "这条任务已取消。", message_id=message_id)
             return
 
-        raw_input = str(pending_request["raw_input"])
+        mode_label = str(MODE_PRESETS[mode]["label"])
+        delivery_request_id = self._create_pending_delivery_request(
+            chat_id,
+            user_id,
+            str(pending_request["raw_input"]),
+            mode,
+        )
+        self._replace_status_message(
+            chat_id,
+            build_video_delivery_selection_text(mode_label),
+            message_id=message_id,
+            reply_markup=_build_delivery_selection_markup(delivery_request_id),
+        )
+
+    def _handle_delivery_callback(
+        self,
+        callback_query: dict[str, Any],
+        *,
+        callback_id: str,
+        chat_id: int,
+        user_id: int,
+        selection: tuple[str, str],
+    ) -> None:
+        message = callback_query.get("message") or {}
+        message_id = _extract_message_id(message)
+        request_id, action = selection
+        pending_delivery = self._pop_pending_delivery_request(
+            request_id,
+            chat_id=chat_id,
+            user_id=user_id,
+        )
+        if pending_delivery is None:
+            if callback_id:
+                self._client.answer_callback_query(
+                    callback_id,
+                    text=build_video_delivery_expired_text(),
+                    show_alert=False,
+                )
+            return
+
+        send_video = action == "send"
+        if callback_id:
+            self._client.answer_callback_query(
+                callback_id,
+                text="任务完成后将发送原视频。" if send_video else "任务完成后不发送原视频。",
+                show_alert=False,
+            )
+
+        raw_input = str(pending_delivery["raw_input"])
+        mode = str(pending_delivery["mode"])
         mode_label = str(MODE_PRESETS[mode]["label"])
         if mode == "download" or not self._app_settings.deepseek_api_key:
             thread = Thread(
                 target=self._process_message_job,
-                args=(chat_id, raw_input, mode, None, message_id, user_id),
+                args=(chat_id, raw_input, mode, None, message_id, user_id, send_video),
                 daemon=True,
             )
             thread.start()
             return
 
-        summary_request_id = self._create_pending_summary_request(chat_id, user_id, raw_input, mode)
+        summary_request_id = self._create_pending_summary_request(
+            chat_id,
+            user_id,
+            raw_input,
+            mode,
+            send_video=send_video,
+        )
         self._replace_status_message(
             chat_id,
             build_summary_selection_text(mode_label),
@@ -458,6 +527,7 @@ class TelegramBotRunner:
                 None if style == "skip" else style,
                 message_id,
                 user_id,
+                bool(pending_summary.get("send_video")),
             ),
             daemon=True,
         )
@@ -471,6 +541,7 @@ class TelegramBotRunner:
         summary_style: Optional[str],
         status_message_id: Optional[int] = None,
         user_id: Optional[int] = None,
+        send_video: bool = False,
     ) -> None:
         logger.info(
             "telegram bot received job chat_id=%s mode=%s summary_style=%s",
@@ -543,6 +614,7 @@ class TelegramBotRunner:
             manifest,
             progress_reporter=progress_reporter,
             user_id=user_id or chat_id,
+            send_video=send_video,
         )
         if action == "run" and summary_style:
             self._process_summary_job(
@@ -572,6 +644,7 @@ class TelegramBotRunner:
         *,
         progress_reporter: Optional["TelegramProgressReporter"] = None,
         user_id: Optional[int] = None,
+        send_video: bool = False,
     ) -> None:
         public_job = to_public_job(manifest)
         summary_text = build_success_summary_text(public_job, self._bot_settings.public_base_url)
@@ -580,20 +653,68 @@ class TelegramBotRunner:
         else:
             self._client.send_message(chat_id, summary_text)
 
-        if str(manifest.get("action") or "") == "download":
-            self._offer_video_send(chat_id, user_id or chat_id, manifest)
+        if str(manifest.get("action") or "") != "download":
+            absolute_transcript_path = resolve_transcript_file(
+                self._app_settings.output_dir,
+                manifest.get("transcript_path"),
+            )
+            if absolute_transcript_path is not None:
+                caption = build_transcript_caption(str(public_job.get("job_id", "-")))
+                try:
+                    self._client.send_document(chat_id, absolute_transcript_path, caption=caption)
+                except Exception as exc:
+                    self._client.send_message(chat_id, build_document_send_failed_text(exc))
+
+        if send_video:
+            self._send_requested_video(chat_id, user_id or chat_id, manifest)
+
+    def _send_requested_video(self, chat_id: int, user_id: int, manifest: dict[str, Any]) -> None:
+        """Send a video already requested before the job, retaining retry/idempotency state."""
+        job_id = str(manifest.get("job_id") or "")
+        video_path = _resolve_output_file(self._app_settings.output_dir, manifest.get("video_path"))
+        if not job_id or video_path is None:
+            self._client.send_message(chat_id, "任务已完成，但原视频文件记录不存在或文件已被清理，无法发送。")
             return
 
-        absolute_transcript_path = resolve_transcript_file(
-            self._app_settings.output_dir,
-            manifest.get("transcript_path"),
+        file_size = video_path.stat().st_size
+        if file_size > self._bot_settings.video_upload_limit_bytes:
+            self._client.send_message(
+                chat_id,
+                build_video_too_large_text(job_id, file_size, self._bot_settings.video_upload_limit_bytes),
+            )
+            return
+
+        request_id = self._create_pending_video_send(
+            chat_id=chat_id,
+            user_id=user_id,
+            job_id=job_id,
+            video_path=str(video_path.relative_to(self._app_settings.output_dir.resolve())),
+            file_size=file_size,
         )
-        if absolute_transcript_path is not None:
-            caption = build_transcript_caption(str(public_job.get("job_id", "-")))
-            try:
-                self._client.send_document(chat_id, absolute_transcript_path, caption=caption)
-            except Exception as exc:
-                self._client.send_message(chat_id, build_document_send_failed_text(exc))
+        try:
+            result = self._client.send_message(
+                chat_id,
+                f"正在按你的选择发送原视频。\n任务 ID：{job_id}",
+            )
+        except Exception as exc:
+            logger.warning(
+                "telegram video status message failed chat_id=%s job_id=%s error=%s",
+                chat_id,
+                job_id,
+                exc,
+            )
+            result = None
+        message_id = _extract_message_id(result)
+        self._set_video_confirmation_message_id(request_id, message_id)
+        pending, _ = self._claim_pending_video_send(
+            request_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            message_id=message_id,
+            action="send",
+        )
+        if pending is not None:
+            self._send_confirmed_video(request_id, chat_id, message_id)
 
     def _offer_video_send(self, chat_id: int, user_id: int, manifest: dict[str, Any]) -> None:
         job_id = str(manifest.get("job_id") or "")
@@ -736,12 +857,13 @@ class TelegramBotRunner:
         except Exception as exc:
             logger.exception("telegram video send failed chat_id=%s job_id=%s", chat_id, pending["job_id"])
             self._finish_pending_video_send(request_id, "pending")
-            self._replace_status_message(
+            result = self._replace_status_message(
                 chat_id,
                 f"原视频发送失败：{exc}\n可以点击按钮重试，文件不会上传到第三方。",
                 message_id=confirmation_message_id,
                 reply_markup=_build_video_confirmation_markup(request_id),
             )
+            self._set_video_confirmation_message_id(request_id, _extract_message_id(result))
             return
 
         self._finish_pending_video_send(request_id, "sent")
@@ -908,7 +1030,66 @@ class TelegramBotRunner:
             _save_state(self._bot_settings.state_path, self._state)
             return pending_request
 
-    def _create_pending_summary_request(self, chat_id: int, user_id: int, raw_input: str, mode: str) -> str:
+    def _create_pending_delivery_request(
+        self,
+        chat_id: int,
+        user_id: int,
+        raw_input: str,
+        mode: str,
+    ) -> str:
+        with self._state_lock:
+            pending_deliveries = _prune_pending_deliveries(
+                dict(self._state.get("pending_deliveries") or {})
+            )
+            request_id = uuid.uuid4().hex[:10]
+            pending_deliveries[request_id] = {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "raw_input": raw_input,
+                "mode": mode,
+                "created_at": time(),
+            }
+            self._state["pending_deliveries"] = pending_deliveries
+            _save_state(self._bot_settings.state_path, self._state)
+            return request_id
+
+    def _pop_pending_delivery_request(
+        self,
+        request_id: str,
+        *,
+        chat_id: int,
+        user_id: int,
+    ) -> Optional[dict[str, Any]]:
+        with self._state_lock:
+            pending_deliveries = dict(self._state.get("pending_deliveries") or {})
+            pending_delivery = pending_deliveries.get(request_id)
+            if not isinstance(pending_delivery, dict) or (
+                int(pending_delivery.get("chat_id") or 0) != chat_id
+                or int(pending_delivery.get("user_id") or 0) != user_id
+            ):
+                return None
+            if (
+                time() - float(pending_delivery.get("created_at") or 0)
+                > self._bot_settings.video_confirmation_ttl_seconds
+            ):
+                pending_deliveries.pop(request_id, None)
+                self._state["pending_deliveries"] = pending_deliveries
+                _save_state(self._bot_settings.state_path, self._state)
+                return None
+            pending_deliveries.pop(request_id, None)
+            self._state["pending_deliveries"] = pending_deliveries
+            _save_state(self._bot_settings.state_path, self._state)
+            return pending_delivery
+
+    def _create_pending_summary_request(
+        self,
+        chat_id: int,
+        user_id: int,
+        raw_input: str,
+        mode: str,
+        *,
+        send_video: bool = False,
+    ) -> str:
         with self._state_lock:
             pending_summaries = dict(self._state.get("pending_summaries") or {})
             pending_summaries = _prune_pending_summaries(pending_summaries)
@@ -918,6 +1099,7 @@ class TelegramBotRunner:
                 "user_id": user_id,
                 "raw_input": raw_input,
                 "mode": mode,
+                "send_video": bool(send_video),
                 "created_at": time(),
             }
             self._state["pending_summaries"] = pending_summaries
@@ -1292,19 +1474,40 @@ def _extract_message_text(message: dict[str, Any]) -> str:
 
 def _load_state(state_path: Path) -> dict[str, Any]:
     if not state_path.exists():
-        return {"offset": None, "pending_requests": {}, "pending_summaries": {}, "pending_video_sends": {}}
+        return {
+            "offset": None,
+            "pending_requests": {},
+            "pending_deliveries": {},
+            "pending_summaries": {},
+            "pending_video_sends": {},
+        }
 
     try:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"offset": None, "pending_requests": {}, "pending_summaries": {}, "pending_video_sends": {}}
+        return {
+            "offset": None,
+            "pending_requests": {},
+            "pending_deliveries": {},
+            "pending_summaries": {},
+            "pending_video_sends": {},
+        }
 
     if not isinstance(payload, dict):
-        return {"offset": None, "pending_requests": {}, "pending_summaries": {}, "pending_video_sends": {}}
+        return {
+            "offset": None,
+            "pending_requests": {},
+            "pending_deliveries": {},
+            "pending_summaries": {},
+            "pending_video_sends": {},
+        }
 
     pending_requests = payload.get("pending_requests")
     if not isinstance(pending_requests, dict):
         pending_requests = {}
+    pending_deliveries = payload.get("pending_deliveries")
+    if not isinstance(pending_deliveries, dict):
+        pending_deliveries = {}
     pending_summaries = payload.get("pending_summaries")
     if not isinstance(pending_summaries, dict):
         pending_summaries = {}
@@ -1314,6 +1517,7 @@ def _load_state(state_path: Path) -> dict[str, Any]:
     return {
         "offset": payload.get("offset"),
         "pending_requests": _prune_pending_requests(pending_requests),
+        "pending_deliveries": _prune_pending_deliveries(pending_deliveries),
         "pending_summaries": _prune_pending_summaries(pending_summaries),
         "pending_video_sends": _prune_pending_video_sends(
             pending_video_sends,
@@ -1405,6 +1609,15 @@ def _build_summary_selection_markup(request_id: str) -> dict[str, Any]:
     }
 
 
+def _build_delivery_selection_markup(request_id: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [[
+            {"text": "发送原视频", "callback_data": f"{DELIVERY_CALLBACK_PREFIX}send:{request_id}"},
+            {"text": "不发送", "callback_data": f"{DELIVERY_CALLBACK_PREFIX}skip:{request_id}"},
+        ]]
+    }
+
+
 def _build_video_confirmation_markup(request_id: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [[
@@ -1436,6 +1649,16 @@ def _parse_summary_callback_data(data: str) -> Optional[tuple[str, str]]:
     if style not in {*SUMMARY_STYLE_LABELS.keys(), "skip"}:
         return None
     return request_id, style
+
+
+def _parse_delivery_callback_data(data: str) -> Optional[tuple[str, str]]:
+    if not data.startswith(DELIVERY_CALLBACK_PREFIX):
+        return None
+    payload = data[len(DELIVERY_CALLBACK_PREFIX):]
+    action, separator, request_id = payload.partition(":")
+    if not separator or not request_id or action not in {"send", "skip"}:
+        return None
+    return request_id, action
 
 
 def _parse_video_callback_data(data: str) -> Optional[tuple[str, str]]:
@@ -1484,6 +1707,35 @@ def _prune_pending_summaries(pending_summaries: dict[str, Any]) -> dict[str, Any
         chat_id = payload.get("chat_id")
         created_at = float(payload.get("created_at") or 0.0)
         if not raw_input or not mode or not chat_id:
+            continue
+        normalized_items.append(
+            (
+                str(request_id),
+                {
+                    "chat_id": int(chat_id),
+                    "user_id": int(payload.get("user_id") or chat_id),
+                    "raw_input": raw_input,
+                    "mode": mode,
+                    "send_video": bool(payload.get("send_video")),
+                    "created_at": created_at,
+                },
+            )
+        )
+
+    normalized_items.sort(key=lambda item: item[1]["created_at"], reverse=True)
+    return dict(normalized_items[:MAX_PENDING_SELECTIONS])
+
+
+def _prune_pending_deliveries(pending_deliveries: dict[str, Any]) -> dict[str, Any]:
+    normalized_items: list[tuple[str, dict[str, Any]]] = []
+    for request_id, payload in pending_deliveries.items():
+        if not isinstance(payload, dict):
+            continue
+        raw_input = str(payload.get("raw_input") or "").strip()
+        mode = str(payload.get("mode") or "").strip()
+        chat_id = payload.get("chat_id")
+        created_at = float(payload.get("created_at") or 0.0)
+        if not raw_input or mode not in MODE_PRESETS or not chat_id:
             continue
         normalized_items.append(
             (

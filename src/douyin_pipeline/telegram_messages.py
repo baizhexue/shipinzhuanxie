@@ -11,7 +11,7 @@ DEFAULT_SUMMARY_CHUNK_LIMIT = 3400
 def build_help_text() -> str:
     return (
         "把抖音、Bilibili、小红书、快手或 YouTube 的链接、完整分享文案发给我。\n"
-        "收到链接后，我会先让你选择处理模式，再确认是否自动总结。\n"
+        "收到链接后，我会依次确认处理模式、是否发送原视频，以及是否自动总结。\n"
         "命令：\n"
         "/help - 查看帮助\n"
         "/web - 查看网页地址"
@@ -42,6 +42,18 @@ def build_summary_selection_text(mode_label: str) -> str:
         "接下来要不要自动总结？\n"
         "如果要，总结会在转写完成后自动继续跑；如果不要，就直接只给你转写稿。"
     )
+
+
+def build_video_delivery_selection_text(mode_label: str) -> str:
+    return (
+        f"已选择：{mode_label}\n"
+        "任务完成后，是否把原视频发送到当前 Telegram 对话？\n"
+        "选择“不发送”仍会正常完成转写或下载，但不会消耗 Telegram 上传流量。"
+    )
+
+
+def build_video_delivery_expired_text() -> str:
+    return "这个视频发送选项已经失效了，请重新发送一次链接。"
 
 
 def build_summary_expired_text() -> str:
